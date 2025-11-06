@@ -13,6 +13,25 @@ const app = express();
 app.use(express.json());
 app.use(cors()); // Enable CORS for local development
 
+// Health check endpoint for monitoring services (e.g., UptimeRobot)
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({ 
+    message: 'Para Backend API',
+    version: '1.0.0',
+    status: 'running'
+  });
+});
+
 // Middleware to authenticate JWT token (optional for chat endpoints)
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
