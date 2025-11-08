@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { v2: cloudinary } = require('cloudinary');
 const stream = require('stream');
+const nodemailer = require('nodemailer');
 const pool = require('./db');
 
 const app = express();
@@ -138,6 +139,84 @@ cloudinary.config({
 // Multer in-memory storage
 const upload = multer({ storage: multer.memoryStorage() });
 
+// =============================
+// Email configuration (nodemailer)
+// =============================
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.EMAIL_PORT || '587'),
+  secure: process.env.EMAIL_SECURE === 'true', // true for port 465, false for other ports
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
+  },
+});
+
+// Function to send verification email
+async function sendVerificationEmail(email, fullName, verificationToken) {
+  const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+  
+  const mailOptions = {
+    from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
+    to: email,
+    subject: 'Verify Your Email Address - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .token-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🎉 Welcome to Para!</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>Thank you for signing up! We're excited to have you on board.</p>
+            <p>To complete your registration and unlock all features, please verify your email address by clicking the button below:</p>
+            <div style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verify Email Address</a>
+            </div>
+            <p style="margin-top: 30px;">Or copy and paste this link into your browser:</p>
+            <div class="token-box">${verificationUrl}</div>
+            <p><strong>This link will expire in 24 hours.</strong></p>
+            <p>If you didn't create an account with Para, you can safely ignore this email.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Verification email sent to ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending verification email:', error);
+    return false;
+  }
+}
+
 // Ensure users table has avatar_url column (idempotent)
 async function ensureAvatarColumn() {
   try {
@@ -235,6 +314,7 @@ app.post('/api/auth/login', async (req, res) => {
         CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
         avatar_url,
+        email_verified,
         password_hash,
         is_locked,
         failed_login_attempts,
@@ -315,7 +395,7 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign(
       { userId: userUuid, email: user.email },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     res.json({
@@ -325,7 +405,8 @@ app.post('/api/auth/login', async (req, res) => {
         id: userUuid,
         fullName: user.full_name,
         email: user.email,
-        avatarUrl: user.avatar_url || null
+        avatarUrl: user.avatar_url || null,
+        emailVerified: user.email_verified || false
       }
     });
   } catch (error) {
@@ -347,6 +428,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) AS full_name,
               CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) AS email,
               avatar_url,
+              email_verified,
               created_at, updated_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
@@ -358,6 +440,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       fullName: u.full_name,
       email: u.email,
       avatarUrl: u.avatar_url || null,
+      emailVerified: u.email_verified || false,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
@@ -663,6 +746,120 @@ app.delete('/api/chats/messages', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'All messages deleted successfully' });
   } catch (error) {
     console.error('Error deleting messages:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// =============================
+// Email Verification Endpoints
+// =============================
+
+// Send verification email
+app.post('/api/users/:id/send-verification', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Ensure user can only request verification for their own account
+    if (req.user.userId !== id) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+    const userIdBinary = uuidToBinary(id);
+
+    // Get user details
+    const [users] = await pool.execute(
+      `SELECT 
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        email_verified
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = users[0];
+
+    // Check if already verified
+    if (user.email_verified) {
+      return res.status(400).json({ message: 'Email already verified' });
+    }
+
+    // Generate verification token (valid for 24 hours)
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+    // Save token to database
+    await pool.execute(
+      'UPDATE users SET verification_token = ?, verification_token_expires = ? WHERE id = ?',
+      [verificationToken, tokenExpiry, userIdBinary]
+    );
+
+    // Send verification email
+    const emailSent = await sendVerificationEmail(user.email, user.full_name, verificationToken);
+
+    if (emailSent) {
+      res.json({ 
+        success: true, 
+        message: 'Verification email sent successfully' 
+      });
+    } else {
+      res.status(500).json({ 
+        message: 'Failed to send verification email. Please try again later.' 
+      });
+    }
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify email with token
+app.get('/api/auth/verify-email/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // Find user with this token
+    const [users] = await pool.execute(
+      'SELECT id, email_verified, verification_token_expires FROM users WHERE verification_token = ?',
+      [token]
+    );
+
+    if (users.length === 0) {
+      return res.status(400).json({ message: 'Invalid verification token' });
+    }
+
+    const user = users[0];
+
+    // Check if already verified
+    if (user.email_verified) {
+      return res.status(400).json({ message: 'Email already verified' });
+    }
+
+    // Check if token expired
+    const now = new Date();
+    const expiryDate = new Date(user.verification_token_expires);
+    
+    if (now > expiryDate) {
+      return res.status(400).json({ message: 'Verification token has expired. Please request a new one.' });
+    }
+
+    // Mark email as verified and clear token
+    await pool.execute(
+      'UPDATE users SET email_verified = 1, verification_token = NULL, verification_token_expires = NULL WHERE id = ?',
+      [user.id]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Email verified successfully!' 
+    });
+  } catch (error) {
+    console.error('Error verifying email:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
