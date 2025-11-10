@@ -154,7 +154,9 @@ const transporter = nodemailer.createTransport({
 
 // Function to send verification email
 async function sendVerificationEmail(email, fullName, verificationToken) {
-  const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+  // Use deep link for mobile app: paraapp://verify-email?token=xxx
+  // Falls back to web URL if FRONTEND_URL is set
+  const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email'}?token=${verificationToken}`;
   
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
