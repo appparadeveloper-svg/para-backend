@@ -415,6 +415,164 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// Google authentication endpoint (handles both login and registration)
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { email, fullName, googleId, photoUrl } = req.body;
+
+    // Validate required fields
+    if (!email || !fullName || !googleId) {
+      return res.status(400).json({
+        message: 'Email, full name, and Google ID are required'
+      });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+    const now = new Date();
+
+    // Check if user already exists with this googleId
+    const [existingUserByGoogleId] = await pool.execute(
+      'SELECT id FROM users WHERE google_id = ?',
+      [googleId]
+    );
+
+    let user;
+    let isNewUser = false;
+    let userIdBinary;
+
+    if (existingUserByGoogleId.length > 0) {
+      // User exists with Google ID - LOGIN
+      userIdBinary = existingUserByGoogleId[0].id;
+      
+      // Update last login timestamp
+      await pool.execute(
+        'UPDATE users SET last_login_attempt = ? WHERE id = ?',
+        [now, userIdBinary]
+      );
+
+      // Get full user details
+      const [userDetails] = await pool.execute(
+        `SELECT 
+          id,
+          CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+          CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+          avatar_url,
+          email_verified,
+          google_id
+         FROM users 
+         WHERE id = ?`,
+        [userIdBinary]
+      );
+      user = userDetails[0];
+    } else {
+      // Check if email is already registered (regular auth)
+      const [existingUserByEmail] = await pool.execute(
+        `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
+        [email]
+      );
+
+      if (existingUserByEmail.length > 0) {
+        // Email exists with regular auth - Link Google account
+        userIdBinary = existingUserByEmail[0].id;
+        
+        await pool.execute(
+          'UPDATE users SET google_id = ?, avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+          [googleId, photoUrl, now, userIdBinary]
+        );
+
+        // Get updated user details
+        const [userDetails] = await pool.execute(
+          `SELECT 
+            id,
+            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+            avatar_url,
+            email_verified,
+            google_id
+           FROM users 
+           WHERE id = ?`,
+          [userIdBinary]
+        );
+        user = userDetails[0];
+      } else {
+        // New user - REGISTRATION
+        isNewUser = true;
+        
+        // Generate a random password (user won't use it, but DB might require it)
+        const randomPassword = await bcrypt.hash(
+          Math.random().toString(36).slice(-16),
+          12
+        );
+
+        // Generate UUID for new user
+        const userId = generateUUID();
+        userIdBinary = uuidToBinary(userId);
+
+        // Insert new user with Google credentials
+        await pool.execute(
+          `INSERT INTO users 
+           (id, full_name, email, password_hash, google_id, avatar_url, email_verified, created_at) 
+           VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), ?, ?, ?, TRUE, NOW())`,
+          [userIdBinary, fullName, email, randomPassword, googleId, photoUrl]
+        );
+
+        // Get the newly created user
+        const [newUserDetails] = await pool.execute(
+          `SELECT 
+            id,
+            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+            avatar_url,
+            email_verified,
+            google_id
+           FROM users 
+           WHERE id = ?`,
+          [userIdBinary]
+        );
+        user = newUserDetails[0];
+      }
+    }
+
+    // Convert binary UUID to string
+    const userUuid = binaryToUuid(user.id);
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        userId: userUuid,
+        email: user.email,
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    // Prepare user response
+    const userResponse = {
+      id: userUuid,
+      email: user.email,
+      fullName: user.full_name,
+      avatarUrl: user.avatar_url,
+      googleId: user.google_id,
+      emailVerified: user.email_verified || true, // Google emails are pre-verified
+    };
+
+    // Return success response
+    return res.status(isNewUser ? 201 : 200).json({
+      message: isNewUser 
+        ? 'Account created successfully with Google' 
+        : 'Logged in successfully with Google',
+      token: token,
+      user: userResponse
+    });
+
+  } catch (error) {
+    console.error('Google auth error:', error);
+    return res.status(500).json({
+      message: 'Internal server error during Google authentication'
+    });
+  }
+});
+
 // ==========================================
 // User profile endpoints (auth required)
 // ==========================================
