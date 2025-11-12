@@ -1185,10 +1185,380 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // allow external access
 
+// ============================================================================
+// Enhanced Chat Endpoints - Support NLU, Sentiment Analysis, and Context
+// ============================================================================
+
+// Helper function to update session activity
+async function updateSessionActivity(sessionId, userIdBinary) {
+  try {
+    await pool.execute(`
+      INSERT INTO conversation_sessions (id, user_id, message_count, last_activity)
+      VALUES (?, ?, 1, NOW())
+      ON DUPLICATE KEY UPDATE
+      message_count = message_count + 1,
+      last_activity = NOW()
+    `, [sessionId, userIdBinary]);
+  } catch (error) {
+    console.error('Error updating session activity:', error);
+  }
+}
+
+// Helper function to update conversation analytics
+async function updateConversationAnalytics(userId, sessionId, isBot, sentiment) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    await pool.execute(`
+      INSERT INTO conversation_analytics 
+      (user_id, session_id, date, total_messages, user_messages, bot_messages)
+      VALUES (?, ?, ?, 1, ?, ?)
+      ON DUPLICATE KEY UPDATE
+      total_messages = total_messages + 1,
+      user_messages = user_messages + ?,
+      bot_messages = bot_messages + ?
+    `, [
+      uuidToBinary(userId),
+      sessionId,
+      today,
+      isBot ? 0 : 1,
+      isBot ? 1 : 0,
+      isBot ? 0 : 1,
+      isBot ? 1 : 0
+    ]);
+  } catch (error) {
+    console.error('Error updating analytics:', error);
+  }
+}
+
+// Get messages with enhanced data for a user
+app.get('/api/chats/:userId/messages/enhanced', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const userIdParam = req.params.userId;
+    const { sessionId, limit = 50, offset = 0 } = req.query;
+    
+    console.log(`[GET Enhanced Messages] Request for userId: ${userIdParam}, sessionId: ${sessionId}`);
+    
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userIdParam)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userIdParam) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userIdParam);
+
+    // Build query with optional session filter
+    let query = `
+      SELECT id, user_id, text, is_bot as isBot, timestamp, error, 
+             intent, sentiment, confidence, entities, metadata, session_id
+      FROM messages 
+      WHERE user_id = ?
+    `;
+    const params = [userIdBinary];
+
+    if (sessionId) {
+      query += ' AND session_id = ?';
+      params.push(sessionId);
+    }
+
+    query += ' ORDER BY timestamp ASC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+
+    const [rows] = await pool.execute(query, params);
+
+    // Format response with enhanced data
+    const formattedRows = rows.map(row => ({
+      id: row.id,
+      userId: binaryToUuid(row.user_id) || userIdParam,
+      text: row.text,
+      isBot: row.isBot === 1 || row.isBot === true,
+      timestamp: row.timestamp ? new Date(row.timestamp).toISOString() : new Date().toISOString(),
+      error: row.error,
+      intent: row.intent,
+      sentiment: row.sentiment,
+      confidence: row.confidence,
+      entities: row.entities ? JSON.parse(row.entities) : null,
+      metadata: row.metadata ? JSON.parse(row.metadata) : null,
+      sessionId: row.session_id
+    }));
+
+    res.json({
+      messages: formattedRows,
+      total: formattedRows.length,
+      sessionId: sessionId
+    });
+  } catch (error) {
+    console.error('[GET Enhanced Messages] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Post enhanced message with NLU and sentiment data
+app.post('/api/chats/:userId/messages/enhanced', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const userIdParam = req.params.userId;
+    const { 
+      text, 
+      isBot, 
+      error, 
+      intent, 
+      sentiment, 
+      confidence, 
+      entities, 
+      metadata, 
+      sessionId 
+    } = req.body;
+    
+    console.log(`[POST Enhanced Message] Request for userId: ${userIdParam}, sessionId: ${sessionId}`);
+    
+    // Validate required fields
+    if (!text || typeof isBot !== 'boolean') {
+      return res.status(400).json({ message: 'Text and isBot are required' });
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userIdParam)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userIdParam) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userIdParam);
+
+    // Verify user exists
+    const [userCheck] = await pool.execute(
+      'SELECT id FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+    if (userCheck.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Create or update session if provided
+    if (sessionId && isBot === false) { // Only update session for user messages
+      await updateSessionActivity(sessionId, userIdBinary);
+    }
+
+    // Insert enhanced message
+    const [result] = await pool.execute(`
+      INSERT INTO messages 
+      (user_id, text, is_bot, error, intent, sentiment, confidence, entities, metadata, session_id, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    `, [
+      userIdBinary,
+      text,
+      isBot ? 1 : 0,
+      error || null,
+      intent || null,
+      sentiment || null,
+      confidence || null,
+      entities ? JSON.stringify(entities) : null,
+      metadata ? JSON.stringify(metadata) : null,
+      sessionId || null
+    ]);
+
+    // Update analytics
+    await updateConversationAnalytics(userIdParam, sessionId, isBot, sentiment);
+
+    res.json({
+      id: result.insertId,
+      message: 'Message saved successfully',
+      sessionId: sessionId
+    });
+  } catch (error) {
+    console.error('[POST Enhanced Message] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create or update conversation session
+app.post('/api/chats/:userId/sessions', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const userIdParam = req.params.userId;
+    const { sessionId, context, preferences } = req.body;
+    
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userIdParam)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userIdParam) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userIdParam);
+
+    // Generate session ID if not provided
+    const finalSessionId = sessionId || generateUUID();
+
+    // Insert or update session
+    await pool.execute(`
+      INSERT INTO conversation_sessions 
+      (id, user_id, context, preferences, started_at, last_activity)
+      VALUES (?, ?, ?, ?, NOW(), NOW())
+      ON DUPLICATE KEY UPDATE
+      context = VALUES(context),
+      preferences = VALUES(preferences),
+      last_activity = NOW()
+    `, [
+      finalSessionId,
+      userIdBinary,
+      context ? JSON.stringify(context) : null,
+      preferences ? JSON.stringify(preferences) : null
+    ]);
+
+    res.json({
+      sessionId: finalSessionId,
+      message: 'Session created/updated successfully'
+    });
+  } catch (error) {
+    console.error('[POST Session] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get conversation session
+app.get('/api/chats/:userId/sessions/:sessionId', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { userId, sessionId } = req.params;
+    
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userId)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userId) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    const [rows] = await pool.execute(`
+      SELECT id, user_id, started_at, last_activity, message_count, context, preferences
+      FROM conversation_sessions 
+      WHERE id = ? AND user_id = ?
+    `, [sessionId, userIdBinary]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
+
+    const session = rows[0];
+    res.json({
+      sessionId: session.id,
+      userId: binaryToUuid(session.user_id),
+      startedAt: session.started_at,
+      lastActivity: session.last_activity,
+      messageCount: session.message_count,
+      context: session.context ? JSON.parse(session.context) : null,
+      preferences: session.preferences ? JSON.parse(session.preferences) : null
+    });
+  } catch (error) {
+    console.error('[GET Session] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update user preferences
+app.post('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const userIdParam = req.params.userId;
+    const { preferences } = req.body; // Object with key-value pairs
+    
+    if (!preferences || typeof preferences !== 'object') {
+      return res.status(400).json({ message: 'Preferences object is required' });
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userIdParam)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userIdParam) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userIdParam);
+
+    // Batch insert/update preferences
+    const insertPromises = Object.entries(preferences).map(([key, value]) =>
+      pool.execute(`
+        INSERT INTO user_chat_preferences (user_id, preference_key, preference_value)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+        preference_value = VALUES(preference_value),
+        updated_at = NOW()
+      `, [userIdBinary, key, JSON.stringify(value)])
+    );
+
+    await Promise.all(insertPromises);
+
+    res.json({
+      message: 'Preferences updated successfully',
+      preferences: preferences
+    });
+  } catch (error) {
+    console.error('[POST Preferences] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get user preferences
+app.get('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req, res) => {
+  try {
+    const userIdParam = req.params.userId;
+    
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userIdParam)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    // If JWT token is provided, verify userId matches authenticated user
+    if (req.user && req.user.userId !== userIdParam) {
+      return res.status(403).json({ message: 'Access denied: User ID mismatch' });
+    }
+
+    const userIdBinary = uuidToBinary(userIdParam);
+
+    const [rows] = await pool.execute(`
+      SELECT preference_key, preference_value
+      FROM user_chat_preferences
+      WHERE user_id = ?
+    `, [userIdBinary]);
+
+    const preferences = {};
+    rows.forEach(row => {
+      preferences[row.preference_key] = JSON.parse(row.preference_value);
+    });
+
+    res.json(preferences);
+  } catch (error) {
+    console.error('[GET Preferences] Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Backend server running on http://${HOST}:${PORT}`);
   console.log(`📝 API endpoints available at http://${HOST}:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️  Database: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}/${process.env.DB_NAME || 'para_db'}`);
+  console.log(`🤖 Enhanced chat features enabled`);
   ensureAvatarColumn();
 });
