@@ -1411,6 +1411,316 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
   }
 });
 
+// =============================
+// Password Reset Endpoints
+// =============================
+
+// Function to send password reset email
+async function sendPasswordResetEmail(email, fullName, resetToken) {
+  // Use deep link for mobile app: paraapp://reset-password?token=xxx
+  // Falls back to web URL if FRONTEND_URL is set
+  const resetUrl = `${process.env.FRONTEND_URL || 'paraapp://reset-password'}?token=${resetToken}`;
+  
+  // Try SendGrid API first if configured, fallback to SMTP
+  if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
+    return await sendPasswordResetEmailViaSendGridAPI(email, fullName, resetToken);
+  }
+  
+  const mailOptions = {
+    from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
+    to: email,
+    subject: 'Reset Your Password - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .token-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+          .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; color: #856404; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Reset Your Password</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>We received a request to reset your password for your Para account.</p>
+            <p>Click the button below to create a new password:</p>
+            <div style="text-align: center;">
+              <a href="${resetUrl}" class="button">Reset Password</a>
+            </div>
+            <p style="margin-top: 30px;">Or copy and paste this link into your browser:</p>
+            <div class="token-box">${resetUrl}</div>
+            <p><strong>This link will expire in 1 hour.</strong></p>
+            <div class="warning">
+              <strong>⚠️ Security Note:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Password reset email sent to ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending password reset email:', error);
+    return false;
+  }
+}
+
+// SendGrid API fallback for password reset
+async function sendPasswordResetEmailViaSendGridAPI(email, fullName, resetToken) {
+  const sgMail = require('@sendgrid/mail');
+  sgMail.setApiKey(process.env.EMAIL_PASSWORD);
+  
+  const resetUrl = `https://para-backend-eukj.onrender.com/api/auth/reset-password/${resetToken}?redirect=paraapp://reset-password`;
+  
+  const msg = {
+    to: email,
+    from: {
+      email: process.env.EMAIL_FROM_ADDRESS || 'support-app.online',
+      name: process.env.EMAIL_FROM_NAME || 'Para App'
+    },
+    subject: 'Reset Your Password - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .token-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+          .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; color: #856404; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Reset Your Password</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>We received a request to reset your password for your Para account.</p>
+            <p>Click the button below to create a new password:</p>
+            <div style="text-align: center;">
+              <a href="${resetUrl}" class="button">Reset Password</a>
+            </div>
+            <p style="margin-top: 30px;">Or copy and paste this link into your browser:</p>
+            <div class="token-box">${resetUrl}</div>
+            <p><strong>This link will expire in 1 hour.</strong></p>
+            <div class="warning">
+              <strong>⚠️ Security Note:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Password reset email sent via SendGrid API to ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending via SendGrid API:', error.response?.body || error);
+    return false;
+  }
+}
+
+// Request password reset
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Find user with this email
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email
+       FROM users 
+       WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
+      [email]
+    );
+
+    // Always return success message for security (don't reveal if email exists)
+    if (users.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'If an account exists for this email, you will receive reset instructions.' 
+      });
+    }
+
+    const user = users[0];
+
+    // Generate reset token (valid for 1 hour)
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+    // Save token to database
+    await pool.execute(
+      'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
+      [resetToken, tokenExpiry, user.id]
+    );
+
+    // Send password reset email
+    const emailSent = await sendPasswordResetEmail(user.email, user.full_name, resetToken);
+
+    if (emailSent) {
+      res.json({ 
+        success: true, 
+        message: 'If an account exists for this email, you will receive reset instructions.' 
+      });
+    } else {
+      res.status(500).json({ 
+        message: 'Failed to send password reset email. Please try again later.' 
+      });
+    }
+  } catch (error) {
+    console.error('Error requesting password reset:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify reset token (optional, for checking validity before showing reset form)
+app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // Find user with this token
+    const [users] = await pool.execute(
+      'SELECT id, reset_token_expires FROM users WHERE reset_token = ?',
+      [token]
+    );
+
+    if (users.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid or expired reset token' 
+      });
+    }
+
+    const user = users[0];
+
+    // Check if token expired
+    const now = new Date();
+    const expiryDate = new Date(user.reset_token_expires);
+    
+    if (now > expiryDate) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Reset token has expired. Please request a new one.' 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Token is valid' 
+    });
+  } catch (error) {
+    console.error('Error verifying reset token:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Reset password with token
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ message: 'Token and new password are required' });
+    }
+
+    // Validate password strength (minimum 6 characters)
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+    }
+
+    // Find user with this token
+    const [users] = await pool.execute(
+      'SELECT id, reset_token_expires FROM users WHERE reset_token = ?',
+      [token]
+    );
+
+    if (users.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+
+    const user = users[0];
+
+    // Check if token expired
+    const now = new Date();
+    const expiryDate = new Date(user.reset_token_expires);
+    
+    if (now > expiryDate) {
+      return res.status(400).json({ 
+        message: 'Reset token has expired. Please request a new one.' 
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    // Update password and clear reset token
+    await pool.execute(
+      'UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
+      [hashedPassword, user.id]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Password reset successfully!' 
+    });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // allow external access
 
