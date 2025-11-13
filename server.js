@@ -150,6 +150,11 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASSWORD,
   },
+  connectionTimeout: 30000, // 30 seconds
+  greetingTimeout: 15000,   // 15 seconds
+  socketTimeout: 30000,     // 30 seconds
+  debug: true,              // Enable debug output
+  logger: true,             // Log to console
 });
 
 // Function to send verification email
@@ -157,6 +162,11 @@ async function sendVerificationEmail(email, fullName, verificationToken) {
   // Use deep link for mobile app: paraapp://verify-email?token=xxx
   // Falls back to web URL if FRONTEND_URL is set
   const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email'}?token=${verificationToken}`;
+  
+  // Try SendGrid API first if configured, fallback to SMTP
+  if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
+    return await sendVerificationEmailViaSendGridAPI(email, fullName, verificationToken);
+  }
   
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
@@ -215,6 +225,77 @@ async function sendVerificationEmail(email, fullName, verificationToken) {
     return true;
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
+    return false;
+  }
+}
+
+// SendGrid API fallback function
+async function sendVerificationEmailViaSendGridAPI(email, fullName, verificationToken) {
+  const sgMail = require('@sendgrid/mail');
+  sgMail.setApiKey(process.env.EMAIL_PASSWORD);
+  
+  const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email'}?token=${verificationToken}`;
+  
+  const msg = {
+    to: email,
+    from: {
+      email: process.env.EMAIL_FROM_ADDRESS || 'support-app.online',
+      name: process.env.EMAIL_FROM_NAME || 'Para App'
+    },
+    subject: 'Verify Your Email Address - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .token-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🎉 Welcome to Para!</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>Thank you for signing up! We're excited to have you on board.</p>
+            <p>To complete your registration and unlock all features, please verify your email address by clicking the button below:</p>
+            <div style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verify Email Address</a>
+            </div>
+            <p style="margin-top: 30px;">Or copy and paste this link into your browser:</p>
+            <div class="token-box">${verificationUrl}</div>
+            <p><strong>This link will expire in 24 hours.</strong></p>
+            <p>If you didn't create an account with Para, you can safely ignore this email.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Verification email sent via SendGrid API to ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending via SendGrid API:', error.response?.body || error);
     return false;
   }
 }
