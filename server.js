@@ -234,7 +234,7 @@ async function sendVerificationEmailViaSendGridAPI(email, fullName, verification
   const sgMail = require('@sendgrid/mail');
   sgMail.setApiKey(process.env.EMAIL_PASSWORD);
   
-  const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email'}?token=${verificationToken}`;
+  const verificationUrl = `https://para-backend-eukj.onrender.com/api/auth/verify-email/${verificationToken}?redirect=paraapp://verify-email`;
   
   const msg = {
     to: email,
@@ -1229,6 +1229,36 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
     );
 
     if (users.length === 0) {
+      const { redirect } = req.query;
+      if (redirect) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Verification Failed - Para App</title>
+            <style>
+              body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+              .container { background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 500px; }
+              .icon { font-size: 64px; margin-bottom: 20px; }
+              h1 { margin-bottom: 20px; font-size: 32px; }
+              p { margin-bottom: 30px; font-size: 18px; opacity: 0.9; }
+              .button { display: inline-block; padding: 15px 30px; background: white; color: #ff6b6b; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; margin: 10px; transition: all 0.3s ease; }
+              .button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">❌</div>
+              <h1>Invalid Verification Link</h1>
+              <p>This verification link is invalid or has already been used.</p>
+              <a href="${redirect}" class="button">Return to Para App</a>
+            </div>
+          </body>
+          </html>
+        `);
+      }
       return res.status(400).json({ message: 'Invalid verification token' });
     }
 
@@ -1236,6 +1266,36 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
 
     // Check if already verified
     if (user.email_verified) {
+      const { redirect } = req.query;
+      if (redirect) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Already Verified - Para App</title>
+            <style>
+              body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #ffa502 0%, #ff6348 100%); color: white; margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+              .container { background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 500px; }
+              .icon { font-size: 64px; margin-bottom: 20px; }
+              h1 { margin-bottom: 20px; font-size: 32px; }
+              p { margin-bottom: 30px; font-size: 18px; opacity: 0.9; }
+              .button { display: inline-block; padding: 15px 30px; background: white; color: #ffa502; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; margin: 10px; transition: all 0.3s ease; }
+              .button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">✅</div>
+              <h1>Email Already Verified</h1>
+              <p>Your email is already verified. You can continue using the Para app.</p>
+              <a href="${redirect}" class="button">Return to Para App</a>
+            </div>
+          </body>
+          </html>
+        `);
+      }
       return res.status(400).json({ message: 'Email already verified' });
     }
 
@@ -1244,6 +1304,36 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
     const expiryDate = new Date(user.verification_token_expires);
     
     if (now > expiryDate) {
+      const { redirect } = req.query;
+      if (redirect) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Link Expired - Para App</title>
+            <style>
+              body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #ff7675 0%, #d63031 100%); color: white; margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+              .container { background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 500px; }
+              .icon { font-size: 64px; margin-bottom: 20px; }
+              h1 { margin-bottom: 20px; font-size: 32px; }
+              p { margin-bottom: 30px; font-size: 18px; opacity: 0.9; }
+              .button { display: inline-block; padding: 15px 30px; background: white; color: #ff7675; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; margin: 10px; transition: all 0.3s ease; }
+              .button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">⏰</div>
+              <h1>Link Expired</h1>
+              <p>This verification link has expired. Please request a new verification email from the app.</p>
+              <a href="${redirect}" class="button">Return to Para App</a>
+            </div>
+          </body>
+          </html>
+        `);
+      }
       return res.status(400).json({ message: 'Verification token has expired. Please request a new one.' });
     }
 
@@ -1253,10 +1343,68 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
       [user.id]
     );
 
-    res.json({ 
-      success: true, 
-      message: 'Email verified successfully!' 
-    });
+    // Check if redirect parameter exists (for mobile app deep link)
+    const { redirect } = req.query;
+    
+    if (redirect) {
+      // Return HTML page that redirects to mobile app
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Email Verified - Para App</title>
+          <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+            .container { background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 500px; }
+            .icon { font-size: 64px; margin-bottom: 20px; }
+            h1 { margin-bottom: 20px; font-size: 32px; }
+            p { margin-bottom: 30px; font-size: 18px; opacity: 0.9; }
+            .button { display: inline-block; padding: 15px 30px; background: white; color: #667eea; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; margin: 10px; transition: all 0.3s ease; }
+            .button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+            .countdown { margin-top: 20px; font-size: 14px; opacity: 0.8; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="icon">✅</div>
+            <h1>Email Verified Successfully!</h1>
+            <p>Your email has been verified. You can now return to the Para app.</p>
+            <a href="${redirect}" class="button">Open Para App</a>
+            <div class="countdown" id="countdown">Redirecting in 5 seconds...</div>
+          </div>
+          <script>
+            let countdown = 5;
+            const countdownEl = document.getElementById('countdown');
+            
+            const timer = setInterval(() => {
+              countdown--;
+              countdownEl.textContent = \`Redirecting in \${countdown} seconds...\`;
+              
+              if (countdown <= 0) {
+                clearInterval(timer);
+                window.location.href = '${redirect}';
+              }
+            }, 1000);
+            
+            // Also redirect immediately if user clicks the button
+            document.querySelector('.button').addEventListener('click', (e) => {
+              e.preventDefault();
+              clearInterval(timer);
+              window.location.href = '${redirect}';
+            });
+          </script>
+        </body>
+        </html>
+      `);
+    } else {
+      // Return JSON for API calls
+      res.json({ 
+        success: true, 
+        message: 'Email verified successfully!' 
+      });
+    }
   } catch (error) {
     console.error('Error verifying email:', error);
     res.status(500).json({ message: 'Server error' });
