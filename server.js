@@ -157,6 +157,60 @@ const transporter = nodemailer.createTransport({
   logger: true,             // Log to console
 });
 
+function buildResetHtml({
+  title,
+  emoji,
+  message,
+  buttonLabel,
+  buttonHref,
+  redirectHref,
+}) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>${title}</title>
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .container { background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 520px; }
+        .icon { font-size: 64px; margin-bottom: 20px; }
+        h1 { margin-bottom: 20px; font-size: 32px; }
+        p { margin-bottom: 30px; font-size: 18px; opacity: 0.9; }
+        .button { display: inline-block; padding: 15px 30px; background: white; color: #667eea; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; margin: 10px; transition: all 0.3s ease; }
+        .button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+        .countdown { margin-top: 20px; font-size: 14px; opacity: 0.8; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="icon">${emoji}</div>
+        <h1>${title}</h1>
+        <p>${message}</p>
+        <a href="${buttonHref}" class="button">${buttonLabel}</a>
+        ${redirectHref ? `<div class="countdown" id="countdown">Redirecting in 5 seconds...</div>` : ''}
+      </div>
+      ${redirectHref ? `
+      <script>
+        let countdown = 5;
+        const countdownEl = document.getElementById('countdown');
+        const timer = setInterval(() => {
+          countdown--;
+          if (countdownEl) {
+            countdownEl.textContent = 'Redirecting in ' + countdown + ' seconds...';
+          }
+          if (countdown <= 0) {
+            clearInterval(timer);
+            window.location.href = '${redirectHref}';
+          }
+        }, 1000);
+      </script>` : ''}
+    </body>
+    </html>
+  `;
+}
+
 // Function to send verification email
 async function sendVerificationEmail(email, fullName, verificationToken) {
   // Use deep link for mobile app: paraapp://verify-email?token=xxx
@@ -1662,6 +1716,73 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
     });
   } catch (error) {
     console.error('Error verifying reset token:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Handle password reset link from email (HTML/deep link redirect)
+app.get('/api/auth/reset-password/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const redirectBase = req.query.redirect;
+
+    const [users] = await pool.execute(
+      'SELECT id, reset_token_expires FROM users WHERE reset_token = ?',
+      [token]
+    );
+
+    if (users.length === 0) {
+      return res.status(400).send(buildResetHtml({
+        title: 'Invalid Reset Link',
+        emoji: '❌',
+        message:
+          'This password reset link is invalid or has already been used. Please request a new link from the Para app.',
+        buttonLabel: 'Back to Para App',
+        buttonHref: redirectBase || process.env.FRONTEND_URL || 'https://para-app.online',
+      }));
+    }
+
+    const user = users[0];
+    const now = new Date();
+    const expiryDate = new Date(user.reset_token_expires);
+
+    if (now > expiryDate) {
+      return res.status(400).send(buildResetHtml({
+        title: 'Reset Link Expired',
+        emoji: '⏰',
+        message:
+          'This password reset link has expired. Please request a new link from the Para app.',
+        buttonLabel: 'Request New Link',
+        buttonHref: redirectBase || process.env.FRONTEND_URL || 'https://para-app.online',
+      }));
+    }
+
+    const redirectTarget = (() => {
+      if (!redirectBase) return null;
+      const connector = redirectBase.includes('?') ? '&' : '?';
+      return `${redirectBase}${connector}token=${token}`;
+    })();
+
+    if (redirectTarget) {
+      return res.send(buildResetHtml({
+        title: 'Open Para App to Reset Password',
+        emoji: '🔐',
+        message:
+          'Tap the button below to continue resetting your password in the Para app.',
+        buttonLabel: 'Open Para App',
+        buttonHref: redirectTarget,
+        redirectHref: redirectTarget,
+      }));
+    }
+
+    // No redirect specified: return JSON for browser clients
+    res.json({
+      success: true,
+      message: 'Reset token is valid. Submit POST /api/auth/reset-password with your new password.',
+      token,
+    });
+  } catch (error) {
+    console.error('Error handling reset password link:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
