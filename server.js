@@ -974,6 +974,72 @@ app.post('/api/users/:id/avatar', authenticateToken, upload.single('image'), asy
   }
 });
 
+// =============================
+// Support & Feedback Endpoints
+// =============================
+
+// Submit a support report (bug, performance issue, etc.)
+app.post('/api/support/reports', authenticateToken, async (req, res) => {
+  try {
+    const { userId, category, description } = req.body || {};
+
+    if (!userId || !category || !description) {
+      return res.status(400).json({ message: 'userId, category, and description are required' });
+    }
+
+    if (!req.user || req.user.userId !== userId) {
+      return res.status(403).json({ message: 'Forbidden: userId does not match authenticated user' });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    const [result] = await pool.execute(
+      'INSERT INTO support_reports (user_id, category, description, status, created_at) VALUES (?, ?, ?, ?, NOW())',
+      [userIdBinary, category, description, 'open']
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Report submitted successfully',
+      reportId: result.insertId,
+    });
+  } catch (error) {
+    console.error('Error submitting support report:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Submit general user feedback
+app.post('/api/support/feedback', authenticateToken, async (req, res) => {
+  try {
+    const { userId, feedback } = req.body || {};
+
+    if (!userId || !feedback) {
+      return res.status(400).json({ message: 'userId and feedback are required' });
+    }
+
+    if (!req.user || req.user.userId !== userId) {
+      return res.status(403).json({ message: 'Forbidden: userId does not match authenticated user' });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    const [result] = await pool.execute(
+      'INSERT INTO support_feedback (user_id, feedback, created_at) VALUES (?, ?, NOW())',
+      [userIdBinary, feedback]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Feedback submitted successfully',
+      feedbackId: result.insertId,
+    });
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // ============================================================================
 // Chat endpoints - support both /api/chats/:userId/messages format and 
 // /api/chats/messages with JWT auth for backward compatibility
