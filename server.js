@@ -8,6 +8,8 @@ const multer = require('multer');
 const { v2: cloudinary } = require('cloudinary');
 const stream = require('stream');
 const nodemailer = require('nodemailer');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 const pool = require('./db');
 
 const app = express();
@@ -453,6 +455,8 @@ app.post('/api/auth/login', async (req, res) => {
         avatar_url,
         email_verified,
         password_hash,
+        old_password_hash,
+        password_changed_at,
         is_locked,
         failed_login_attempts,
         locked_until,
@@ -492,6 +496,36 @@ app.post('/api/auth/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
     
     if (!isMatch) {
+      // Check if user is trying to use their old password
+      let isOldPassword = false;
+      let passwordChangedMessage = '';
+      
+      if (user.old_password_hash && user.password_changed_at) {
+        isOldPassword = await bcrypt.compare(password, user.old_password_hash);
+        
+        if (isOldPassword) {
+          // Calculate time since password change
+          const changedAt = new Date(user.password_changed_at);
+          const timeDiff = now - changedAt;
+          const daysAgo = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+          const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
+          const minutesAgo = Math.floor(timeDiff / (1000 * 60));
+          
+          let timeAgoText;
+          if (daysAgo > 0) {
+            timeAgoText = daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
+          } else if (hoursAgo > 0) {
+            timeAgoText = hoursAgo === 1 ? '1 hour ago' : `${hoursAgo} hours ago`;
+          } else if (minutesAgo > 0) {
+            timeAgoText = minutesAgo === 1 ? '1 minute ago' : `${minutesAgo} minutes ago`;
+          } else {
+            timeAgoText = 'just now';
+          }
+          
+          passwordChangedMessage = `Your password was changed ${timeAgoText}. Please use your new password.`;
+        }
+      }
+      
       // Increment failed login attempts
       const newAttempts = (user.failed_login_attempts || 0) + 1;
       const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
@@ -512,13 +546,27 @@ app.post('/api/auth/login', async (req, res) => {
       if (shouldLock) {
         return res.status(423).json({ 
           message: `Account has been locked due to ${MAX_FAILED_ATTEMPTS} failed login attempts. Try again in ${LOCKOUT_DURATION_MINUTES} minutes.`,
-          lockedUntil: lockUntil
+          lockedUntil: lockUntil,
+          isOldPassword: isOldPassword,
+          passwordChangedMessage: passwordChangedMessage
         });
       }
 
       const remainingAttempts = MAX_FAILED_ATTEMPTS - newAttempts;
+      
+      // Build the error message
+      let errorMessage = 'Invalid credentials.';
+      if (isOldPassword && passwordChangedMessage) {
+        errorMessage = passwordChangedMessage;
+      }
+      errorMessage += ` ${newAttempts} failed attempt${newAttempts > 1 ? 's' : ''}. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining before account lock.`;
+      
       return res.status(400).json({ 
-        message: `Invalid credentials. ${remainingAttempts} attempt(s) remaining before account lock.`
+        message: errorMessage,
+        isOldPassword: isOldPassword,
+        passwordChangedMessage: passwordChangedMessage,
+        failedAttempts: newAttempts,
+        remainingAttempts: remainingAttempts
       });
     }
 
@@ -1977,10 +2025,10 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
-    // Update password
+    // Update password and store old password hash with timestamp
     await pool.execute(
-      'UPDATE users SET password_hash = ? WHERE id = ?',
-      [hashedPassword, userIdBinary]
+      'UPDATE users SET password_hash = ?, old_password_hash = ?, password_changed_at = NOW() WHERE id = ?',
+      [hashedPassword, user.password_hash, userIdBinary]
     );
 
     res.json({ 
@@ -1989,6 +2037,343 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error changing password:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// ============================================================================
+// Two-Factor Authentication (2FA) Endpoints
+// ============================================================================
+
+// Setup 2FA - Generate secret and QR code
+app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID is required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user details
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        two_factor_enabled
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+
+    // Generate secret
+    const secret = speakeasy.generateSecret({
+      name: `Para App (${user.email})`,
+      issuer: 'Para App',
+      length: 32
+    });
+
+    // Generate QR code
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    // Store the secret temporarily (encrypted) - not enabled yet
+    await pool.execute(
+      'UPDATE users SET two_factor_secret = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+      [secret.base32, userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      secret: secret.base32,
+      qrCode: qrCodeUrl,
+      message: 'Scan the QR code with your authenticator app'
+    });
+  } catch (error) {
+    console.error('Error setting up 2FA:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// Verify and enable 2FA
+app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
+  try {
+    const { userId, token } = req.body;
+
+    if (!userId || !token) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID and verification token are required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user's secret
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0 || !users[0].two_factor_secret) {
+      return res.status(400).json({ 
+        success: false,
+        message: '2FA setup not initiated' 
+      });
+    }
+
+    const user = users[0];
+
+    // Verify the token
+    const verified = speakeasy.totp.verify({
+      secret: user.two_factor_secret,
+      encoding: 'base32',
+      token: token,
+      window: 2 // Allow 2 time steps before/after for clock skew
+    });
+
+    if (!verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid verification code' 
+      });
+    }
+
+    // Generate backup codes
+    const backupCodes = [];
+    for (let i = 0; i < 10; i++) {
+      backupCodes.push(crypto.randomBytes(4).toString('hex').toUpperCase());
+    }
+
+    // Hash backup codes before storing
+    const hashedBackupCodes = await Promise.all(
+      backupCodes.map(code => bcrypt.hash(code, 10))
+    );
+
+    // Enable 2FA and store backup codes
+    await pool.execute(
+      'UPDATE users SET two_factor_enabled = TRUE, backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+      [JSON.stringify(hashedBackupCodes), userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: '2FA enabled successfully!',
+      backupCodes: backupCodes // Return plain codes to user (only shown once)
+    });
+  } catch (error) {
+    console.error('Error verifying 2FA:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// Disable 2FA
+app.post('/api/auth/2fa/disable', authenticateToken, async (req, res) => {
+  try {
+    const { userId, password } = req.body;
+
+    if (!userId || !password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID and password are required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    // Verify password before disabling 2FA
+    const [users] = await pool.execute(
+      'SELECT id, password_hash FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Incorrect password' 
+      });
+    }
+
+    // Disable 2FA and clear secret and backup codes
+    await pool.execute(
+      'UPDATE users SET two_factor_enabled = FALSE, two_factor_secret = NULL, backup_codes = NULL WHERE id = ?',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: '2FA disabled successfully'
+    });
+  } catch (error) {
+    console.error('Error disabling 2FA:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// Verify 2FA token during login
+app.post('/api/auth/2fa/validate', async (req, res) => {
+  try {
+    const { userId, token, isBackupCode } = req.body;
+
+    if (!userId || !token) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID and token are required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user's 2FA data
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        two_factor_enabled,
+        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
+        CAST(AES_DECRYPT(backup_codes, ${encryptionKey}) AS CHAR) as backup_codes
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+
+    if (!user.two_factor_enabled) {
+      return res.status(400).json({ 
+        success: false,
+        message: '2FA is not enabled for this account' 
+      });
+    }
+
+    let verified = false;
+
+    if (isBackupCode) {
+      // Verify backup code
+      if (!user.backup_codes) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'No backup codes available' 
+        });
+      }
+
+      const backupCodes = JSON.parse(user.backup_codes);
+      
+      // Check if any backup code matches
+      for (let i = 0; i < backupCodes.length; i++) {
+        const isMatch = await bcrypt.compare(token, backupCodes[i]);
+        if (isMatch) {
+          verified = true;
+          // Remove used backup code
+          backupCodes.splice(i, 1);
+          await pool.execute(
+            'UPDATE users SET backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+            [JSON.stringify(backupCodes), userIdBinary]
+          );
+          break;
+        }
+      }
+    } else {
+      // Verify TOTP token
+      verified = speakeasy.totp.verify({
+        secret: user.two_factor_secret,
+        encoding: 'base32',
+        token: token,
+        window: 2
+      });
+    }
+
+    if (!verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid verification code' 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: '2FA verification successful'
+    });
+  } catch (error) {
+    console.error('Error validating 2FA:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// Get 2FA status
+app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userIdBinary = uuidToBinary(userId);
+
+    const [users] = await pool.execute(
+      'SELECT two_factor_enabled FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      enabled: users[0].two_factor_enabled || false
+    });
+  } catch (error) {
+    console.error('Error getting 2FA status:', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error' 
