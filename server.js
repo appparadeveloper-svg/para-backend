@@ -655,7 +655,7 @@ app.post('/api/auth/facebook', async (req, res) => {
         [now, userIdBinary]
       );
 
-      // Get full user details
+      // Get full user details including 2FA status
       const [userDetails] = await pool.execute(
         `SELECT 
           id,
@@ -663,7 +663,8 @@ app.post('/api/auth/facebook', async (req, res) => {
           CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
           avatar_url,
           email_verified,
-          facebook_id
+          facebook_id,
+          two_factor_enabled
          FROM users 
          WHERE id = ?`,
         [userIdBinary]
@@ -685,7 +686,7 @@ app.post('/api/auth/facebook', async (req, res) => {
           [facebookId, photoUrl, now, userIdBinary]
         );
 
-        // Get updated user details
+        // Get updated user details including 2FA status
         const [userDetails] = await pool.execute(
           `SELECT 
             id,
@@ -693,7 +694,8 @@ app.post('/api/auth/facebook', async (req, res) => {
             CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
             avatar_url,
             email_verified,
-            facebook_id
+            facebook_id,
+            two_factor_enabled
            FROM users 
            WHERE id = ?`,
           [userIdBinary]
@@ -721,7 +723,7 @@ app.post('/api/auth/facebook', async (req, res) => {
           [userIdBinary, fullName, email, randomPassword, facebookId, photoUrl]
         );
 
-        // Get the newly created user
+        // Get the newly created user including 2FA status
         const [newUserDetails] = await pool.execute(
           `SELECT 
             id,
@@ -729,7 +731,8 @@ app.post('/api/auth/facebook', async (req, res) => {
             CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
             avatar_url,
             email_verified,
-            facebook_id
+            facebook_id,
+            two_factor_enabled
            FROM users 
            WHERE id = ?`,
           [userIdBinary]
@@ -741,7 +744,25 @@ app.post('/api/auth/facebook', async (req, res) => {
     // Convert binary UUID to string
     const userUuid = binaryToUuid(user.id);
 
-    // Generate JWT token
+    // Check if 2FA is enabled
+    if (user.two_factor_enabled && !isNewUser) {
+      // Don't generate full token yet, return partial response requiring 2FA
+      return res.json({
+        message: '2FA verification required',
+        requires2FA: true,
+        userId: userUuid,
+        user: {
+          id: userUuid,
+          fullName: user.full_name,
+          email: user.email,
+          avatarUrl: user.avatar_url,
+          emailVerified: user.email_verified || true,
+          twoFactorEnabled: user.two_factor_enabled || false
+        }
+      });
+    }
+
+    // Generate JWT token (only if 2FA is not enabled or new user)
     const token = jwt.sign(
       {
         userId: userUuid,
@@ -759,6 +780,7 @@ app.post('/api/auth/facebook', async (req, res) => {
       avatarUrl: user.avatar_url,
       facebookId: user.facebook_id,
       emailVerified: user.email_verified || true, // Facebook emails are pre-verified
+      twoFactorEnabled: user.two_factor_enabled || false
     };
 
     // Return success response
@@ -813,7 +835,7 @@ app.post('/api/auth/google', async (req, res) => {
         [now, userIdBinary]
       );
 
-      // Get full user details
+      // Get full user details including 2FA status
       const [userDetails] = await pool.execute(
         `SELECT 
           id,
@@ -821,7 +843,8 @@ app.post('/api/auth/google', async (req, res) => {
           CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
           avatar_url,
           email_verified,
-          google_id
+          google_id,
+          two_factor_enabled
          FROM users 
          WHERE id = ?`,
         [userIdBinary]
@@ -843,7 +866,7 @@ app.post('/api/auth/google', async (req, res) => {
           [googleId, photoUrl, now, userIdBinary]
         );
 
-        // Get updated user details
+        // Get updated user details including 2FA status
         const [userDetails] = await pool.execute(
           `SELECT 
             id,
@@ -851,7 +874,8 @@ app.post('/api/auth/google', async (req, res) => {
             CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
             avatar_url,
             email_verified,
-            google_id
+            google_id,
+            two_factor_enabled
            FROM users 
            WHERE id = ?`,
           [userIdBinary]
@@ -879,7 +903,7 @@ app.post('/api/auth/google', async (req, res) => {
           [userIdBinary, fullName, email, randomPassword, googleId, photoUrl]
         );
 
-        // Get the newly created user
+        // Get the newly created user including 2FA status
         const [newUserDetails] = await pool.execute(
           `SELECT 
             id,
@@ -887,7 +911,8 @@ app.post('/api/auth/google', async (req, res) => {
             CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
             avatar_url,
             email_verified,
-            google_id
+            google_id,
+            two_factor_enabled
            FROM users 
            WHERE id = ?`,
           [userIdBinary]
@@ -899,7 +924,25 @@ app.post('/api/auth/google', async (req, res) => {
     // Convert binary UUID to string
     const userUuid = binaryToUuid(user.id);
 
-    // Generate JWT token
+    // Check if 2FA is enabled
+    if (user.two_factor_enabled && !isNewUser) {
+      // Don't generate full token yet, return partial response requiring 2FA
+      return res.json({
+        message: '2FA verification required',
+        requires2FA: true,
+        userId: userUuid,
+        user: {
+          id: userUuid,
+          fullName: user.full_name,
+          email: user.email,
+          avatarUrl: user.avatar_url,
+          emailVerified: user.email_verified || true,
+          twoFactorEnabled: user.two_factor_enabled || false
+        }
+      });
+    }
+
+    // Generate JWT token (only if 2FA is not enabled or new user)
     const token = jwt.sign(
       {
         userId: userUuid,
@@ -917,6 +960,7 @@ app.post('/api/auth/google', async (req, res) => {
       avatarUrl: user.avatar_url,
       googleId: user.google_id,
       emailVerified: user.email_verified || true, // Google emails are pre-verified
+      twoFactorEnabled: user.two_factor_enabled || false
     };
 
     // Return success response
