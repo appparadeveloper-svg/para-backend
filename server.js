@@ -3096,7 +3096,11 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
   try {
     const { token } = req.body;
 
+    console.log('🔐 Biometric validate request received');
+    console.log('Token:', token ? token.substring(0, 50) + '...' : 'null');
+
     if (!token) {
+      console.log('❌ No token provided');
       return res.status(400).json({
         success: false,
         message: 'Token is required'
@@ -3106,11 +3110,15 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
     // Verify JWT token
     jwt.verify(token, JWT_SECRET, async (err, decoded) => {
       if (err) {
+        console.log('❌ JWT verification failed:', err.message);
         return res.status(401).json({
           success: false,
           message: 'Invalid or expired token'
         });
       }
+
+      console.log('✅ JWT verified successfully');
+      console.log('User ID:', decoded.userId);
 
       try {
         const userId = decoded.userId;
@@ -3126,6 +3134,7 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         );
 
         if (rows.length === 0) {
+          console.log('❌ User not found in database');
           return res.status(404).json({
             success: false,
             message: 'User not found'
@@ -3133,6 +3142,8 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         }
 
         const user = rows[0];
+        console.log('✅ User found:', user.email);
+        console.log('Biometric enabled in DB:', user.biometric_enabled);
 
         // Update last biometric login timestamp
         await pool.execute(
@@ -3140,6 +3151,7 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
           [userIdBinary]
         );
 
+        console.log('✅ Sending success response');
         res.json({
           success: true,
           user: {
