@@ -2216,11 +2216,20 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
       backupCodes.map(code => bcrypt.hash(code, 10))
     );
 
-    // Enable 2FA and store backup codes
+    console.log('🔐 Storing backup codes...');
+    console.log('🔐 Plain codes count:', backupCodes.length);
+    console.log('🔐 Hashed codes count:', hashedBackupCodes.length);
+    console.log('🔐 Sample plain code:', backupCodes[0]);
+    console.log('🔐 Sample hashed code:', hashedBackupCodes[0].substring(0, 20) + '...');
+    console.log('🔐 JSON string length:', JSON.stringify(hashedBackupCodes).length);
+
+    // Enable 2FA and store backup codes (without encryption - already hashed with bcrypt)
     await pool.execute(
-      'UPDATE users SET two_factor_enabled = TRUE, backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+      'UPDATE users SET two_factor_enabled = TRUE, backup_codes = ? WHERE id = ?',
       [JSON.stringify(hashedBackupCodes), userIdBinary]
     );
+    
+    console.log('✅ Backup codes stored successfully');
 
     res.json({
       success: true,
@@ -2417,7 +2426,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         email_verified,
         two_factor_enabled,
         two_factor_secret,
-        CAST(AES_DECRYPT(backup_codes, ${encryptionKey}) AS CHAR) as backup_codes
+        backup_codes
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
@@ -2444,28 +2453,59 @@ app.post('/api/auth/2fa/login', async (req, res) => {
 
     if (isBackupCode) {
       // Verify backup code
+      console.log('🔐 Backup code verification requested');
+      console.log('🔐 user.backup_codes exists:', !!user.backup_codes);
+      console.log('🔐 user.backup_codes type:', typeof user.backup_codes);
+      
       if (!user.backup_codes) {
+        console.log('❌ No backup codes in database');
         return res.status(400).json({ 
           success: false,
-          message: 'No backup codes available' 
+          message: 'No backup codes available. Please contact support or use your authenticator app.' 
         });
       }
 
-      const backupCodes = JSON.parse(user.backup_codes);
+      let backupCodes;
+      try {
+        backupCodes = JSON.parse(user.backup_codes);
+        console.log('✅ Backup codes parsed successfully, count:', backupCodes.length);
+      } catch (e) {
+        console.log('❌ Failed to parse backup codes:', e.message);
+        console.log('❌ Raw backup_codes value:', user.backup_codes.substring(0, 100));
+        return res.status(400).json({ 
+          success: false,
+          message: 'Backup codes are corrupted. Please disable and re-enable 2FA.' 
+        });
+      }
+      
+      if (backupCodes.length === 0) {
+        console.log('❌ No backup codes remaining');
+        return res.status(400).json({ 
+          success: false,
+          message: 'All backup codes have been used. Please use your authenticator app or disable and re-enable 2FA to generate new codes.' 
+        });
+      }
       
       // Check if any backup code matches
+      console.log(`🔐 Checking ${backupCodes.length} backup codes...`);
       for (let i = 0; i < backupCodes.length; i++) {
         const isMatch = await bcrypt.compare(token, backupCodes[i]);
         if (isMatch) {
+          console.log(`✅ Backup code matched at index ${i}`);
           verified = true;
           // Remove used backup code
           backupCodes.splice(i, 1);
+          console.log(`🔐 Remaining backup codes: ${backupCodes.length}`);
           await pool.execute(
-            'UPDATE users SET backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+            'UPDATE users SET backup_codes = ? WHERE id = ?',
             [JSON.stringify(backupCodes), userIdBinary]
           );
           break;
         }
+      }
+      
+      if (!verified) {
+        console.log('❌ No backup code matched');
       }
     } else {
       // Verify TOTP token
@@ -2475,12 +2515,18 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         token: token,
         window: 2
       });
+      
+      if (verified) {
+        console.log('✅ TOTP token verified');
+      } else {
+        console.log('❌ TOTP token verification failed');
+      }
     }
 
     if (!verified) {
       return res.status(400).json({ 
         success: false,
-        message: 'Invalid verification code' 
+        message: isBackupCode ? 'Invalid backup code' : 'Invalid verification code' 
       });
     }
 
