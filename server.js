@@ -457,6 +457,7 @@ app.post('/api/auth/login', async (req, res) => {
         password_hash,
         old_password_hash,
         password_changed_at,
+        two_factor_enabled,
         is_locked,
         failed_login_attempts,
         locked_until,
@@ -576,7 +577,24 @@ app.post('/api/auth/login', async (req, res) => {
       [now, userIdBinary]
     );
 
-    // Generate token using UUID string
+    // Check if 2FA is enabled
+    if (user.two_factor_enabled) {
+      // Don't generate full token yet, return partial response requiring 2FA
+      return res.json({
+        message: '2FA verification required',
+        requires2FA: true,
+        userId: userUuid,
+        user: {
+          id: userUuid,
+          fullName: user.full_name,
+          email: user.email,
+          avatarUrl: user.avatar_url || null,
+          emailVerified: user.email_verified || false
+        }
+      });
+    }
+
+    // Generate token using UUID string (only if 2FA is not enabled)
     const token = jwt.sign(
       { userId: userUuid, email: user.email },
       JWT_SECRET,
@@ -2091,10 +2109,20 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     });
 
     // Store the secret temporarily (encrypted) - not enabled yet
+    console.log('🔐 2FA Setup - Storing secret for user:', userId);
+    console.log('🔐 2FA Setup - Secret (base32):', secret.base32);
+    
     await pool.execute(
       'UPDATE users SET two_factor_secret = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
       [secret.base32, userIdBinary]
     );
+    
+    // Verify it was stored
+    const [check] = await pool.execute(
+      'SELECT two_factor_secret FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+    console.log('🔐 2FA Setup - Secret stored successfully:', check[0].two_factor_secret !== null);
 
     // Return the TOTP URL for QR code generation on client side
     console.log('🔐 2FA Setup - otpauth_url:', secret.otpauth_url);
@@ -2134,16 +2162,21 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     const [users] = await pool.execute(
       `SELECT 
         id,
-        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret
+        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
+        two_factor_secret as encrypted_secret
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
     );
 
+    console.log('🔐 2FA Verify - User found:', users.length > 0);
+    console.log('🔐 2FA Verify - Has encrypted secret:', users.length > 0 && users[0].encrypted_secret !== null);
+    console.log('🔐 2FA Verify - Decrypted secret:', users.length > 0 ? users[0].two_factor_secret : 'N/A');
+
     if (users.length === 0 || !users[0].two_factor_secret) {
       return res.status(400).json({ 
         success: false,
-        message: '2FA setup not initiated' 
+        message: '2FA setup not initiated. Please go back and scan the QR code again.' 
       });
     }
 
@@ -2344,6 +2377,126 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     });
   } catch (error) {
     console.error('Error validating 2FA:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// Complete login with 2FA verification
+app.post('/api/auth/2fa/login', async (req, res) => {
+  try {
+    const { userId, token, isBackupCode } = req.body;
+
+    if (!userId || !token) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID and verification code are required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user's 2FA data
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        avatar_url,
+        email_verified,
+        two_factor_enabled,
+        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
+        CAST(AES_DECRYPT(backup_codes, ${encryptionKey}) AS CHAR) as backup_codes
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+    const userUuid = binaryToUuid(user.id);
+
+    if (!user.two_factor_enabled) {
+      return res.status(400).json({ 
+        success: false,
+        message: '2FA is not enabled for this account' 
+      });
+    }
+
+    let verified = false;
+
+    if (isBackupCode) {
+      // Verify backup code
+      if (!user.backup_codes) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'No backup codes available' 
+        });
+      }
+
+      const backupCodes = JSON.parse(user.backup_codes);
+      
+      // Check if any backup code matches
+      for (let i = 0; i < backupCodes.length; i++) {
+        const isMatch = await bcrypt.compare(token, backupCodes[i]);
+        if (isMatch) {
+          verified = true;
+          // Remove used backup code
+          backupCodes.splice(i, 1);
+          await pool.execute(
+            'UPDATE users SET backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+            [JSON.stringify(backupCodes), userIdBinary]
+          );
+          break;
+        }
+      }
+    } else {
+      // Verify TOTP token
+      verified = speakeasy.totp.verify({
+        secret: user.two_factor_secret,
+        encoding: 'base32',
+        token: token,
+        window: 2
+      });
+    }
+
+    if (!verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid verification code' 
+      });
+    }
+
+    // Generate full JWT token
+    const jwtToken = jwt.sign(
+      { userId: userUuid, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token: jwtToken,
+      user: {
+        id: userUuid,
+        fullName: user.full_name,
+        email: user.email,
+        avatarUrl: user.avatar_url || null,
+        emailVerified: user.email_verified || false
+      }
+    });
+  } catch (error) {
+    console.error('Error completing 2FA login:', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error' 
