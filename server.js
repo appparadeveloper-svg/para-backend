@@ -3124,9 +3124,9 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         const userId = decoded.userId;
         const userIdBinary = uuidToBinary(userId);
 
-        // Get user data
+        // Get user data (using HEX instead of BIN_TO_UUID for MySQL 5.7 compatibility)
         const [rows] = await pool.execute(
-          `SELECT BIN_TO_UUID(id) as id, full_name, email, phone, avatar_url, 
+          `SELECT HEX(id) as id, full_name, email, phone, avatar_url, 
                   two_factor_enabled, biometric_enabled, created_at
            FROM users 
            WHERE id = ?`,
@@ -3142,6 +3142,10 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         }
 
         const user = rows[0];
+        // Convert HEX back to UUID format
+        const hexId = user.id;
+        const formattedId = `${hexId.substr(0,8)}-${hexId.substr(8,4)}-${hexId.substr(12,4)}-${hexId.substr(16,4)}-${hexId.substr(20,12)}`.toLowerCase();
+        
         console.log('✅ User found:', user.email);
         console.log('Biometric enabled in DB:', user.biometric_enabled);
 
@@ -3155,7 +3159,7 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         res.json({
           success: true,
           user: {
-            id: user.id,
+            id: formattedId,
             fullName: user.full_name,
             email: user.email,
             phone: user.phone,
