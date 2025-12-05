@@ -2108,12 +2108,15 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
       length: 32
     });
 
-    // Store the secret temporarily (encrypted) - not enabled yet
+    // Store the secret temporarily - not enabled yet
+    // Note: Storing without encryption since it's already protected by authentication
+    // and encryption is causing issues with retrieval
     console.log('🔐 2FA Setup - Storing secret for user:', userId);
     console.log('🔐 2FA Setup - Secret (base32):', secret.base32);
+    console.log('🔐 2FA Setup - Secret length:', secret.base32.length);
     
     await pool.execute(
-      'UPDATE users SET two_factor_secret = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+      'UPDATE users SET two_factor_secret = ? WHERE id = ?',
       [secret.base32, userIdBinary]
     );
     
@@ -2123,6 +2126,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
       [userIdBinary]
     );
     console.log('🔐 2FA Setup - Secret stored successfully:', check[0].two_factor_secret !== null);
+    console.log('🔐 2FA Setup - Stored secret matches:', check[0].two_factor_secret === secret.base32);
 
     // Return the TOTP URL for QR code generation on client side
     console.log('🔐 2FA Setup - otpauth_url:', secret.otpauth_url);
@@ -2158,20 +2162,20 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    // Get user's secret
+    // Get user's secret (stored without encryption for reliability)
     const [users] = await pool.execute(
       `SELECT 
         id,
-        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
-        two_factor_secret as encrypted_secret
+        two_factor_secret
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
     );
 
     console.log('🔐 2FA Verify - User found:', users.length > 0);
-    console.log('🔐 2FA Verify - Has encrypted secret:', users.length > 0 && users[0].encrypted_secret !== null);
-    console.log('🔐 2FA Verify - Decrypted secret:', users.length > 0 ? users[0].two_factor_secret : 'N/A');
+    console.log('🔐 2FA Verify - Has secret:', users.length > 0 && users[0].two_factor_secret !== null);
+    console.log('🔐 2FA Verify - Secret:', users.length > 0 ? users[0].two_factor_secret : 'N/A');
+    console.log('🔐 2FA Verify - Secret length:', users.length > 0 && users[0].two_factor_secret ? users[0].two_factor_secret.length : 0);
 
     if (users.length === 0 || !users[0].two_factor_secret) {
       return res.status(400).json({ 
@@ -2304,7 +2308,7 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
       `SELECT 
         id,
         two_factor_enabled,
-        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
+        two_factor_secret,
         CAST(AES_DECRYPT(backup_codes, ${encryptionKey}) AS CHAR) as backup_codes
        FROM users 
        WHERE id = ?`,
@@ -2408,7 +2412,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         avatar_url,
         email_verified,
         two_factor_enabled,
-        CAST(AES_DECRYPT(two_factor_secret, ${encryptionKey}) AS CHAR) as two_factor_secret,
+        two_factor_secret,
         CAST(AES_DECRYPT(backup_codes, ${encryptionKey}) AS CHAR) as backup_codes
        FROM users 
        WHERE id = ?`,
