@@ -1908,6 +1908,94 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+// Change password endpoint (requires authentication and current password)
+app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body;
+
+    // Validate input
+    if (!userId || !currentPassword || !newPassword) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID, current password, and new password are required' 
+      });
+    }
+
+    // Validate new password strength (minimum 8 characters)
+    if (newPassword.length < 8) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'New password must be at least 8 characters long' 
+      });
+    }
+
+    // Validate new password complexity
+    const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).+$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password must include uppercase, number, and special character' 
+      });
+    }
+
+    // Check if new password is same as current
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'New password must be different from current password' 
+      });
+    }
+
+    // Convert userId to binary
+    const userIdBinary = uuidToBinary(userId);
+
+    // Get user's current password hash
+    const [users] = await pool.execute(
+      'SELECT id, password_hash FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    
+    if (!isMatch) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Current password is incorrect' 
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    // Update password
+    await pool.execute(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [hashedPassword, userIdBinary]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Password changed successfully!' 
+    });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // allow external access
 
