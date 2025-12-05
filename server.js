@@ -2962,6 +2962,171 @@ app.get('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req,
   }
 });
 
+// ============================================================================
+// Biometric Authentication Endpoints
+// ============================================================================
+
+// Enable biometric authentication for user
+app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Update user's biometric_enabled status
+    await pool.execute(
+      'UPDATE users SET biometric_enabled = TRUE WHERE id = ?',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: 'Biometric authentication enabled successfully'
+    });
+  } catch (error) {
+    console.error('Error enabling biometric:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to enable biometric authentication'
+    });
+  }
+});
+
+// Disable biometric authentication for user
+app.post('/api/auth/biometric/disable', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Update user's biometric_enabled status
+    await pool.execute(
+      'UPDATE users SET biometric_enabled = FALSE WHERE id = ?',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: 'Biometric authentication disabled successfully'
+    });
+  } catch (error) {
+    console.error('Error disabling biometric:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to disable biometric authentication'
+    });
+  }
+});
+
+// Get biometric status for user
+app.get('/api/auth/biometric/status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    const [rows] = await pool.execute(
+      'SELECT biometric_enabled FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      enabled: rows[0].biometric_enabled === 1
+    });
+  } catch (error) {
+    console.error('Error getting biometric status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get biometric status'
+    });
+  }
+});
+
+// Validate token for biometric login
+app.post('/api/auth/biometric/validate', async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token is required'
+      });
+    }
+
+    // Verify JWT token
+    jwt.verify(token, JWT_SECRET, async (err, decoded) => {
+      if (err) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid or expired token'
+        });
+      }
+
+      try {
+        const userId = decoded.userId;
+        const userIdBinary = uuidToBinary(userId);
+
+        // Get user data
+        const [rows] = await pool.execute(
+          `SELECT BIN_TO_UUID(id) as id, full_name, email, phone, avatar_url, 
+                  two_factor_enabled, biometric_enabled, created_at
+           FROM users 
+           WHERE id = ?`,
+          [userIdBinary]
+        );
+
+        if (rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: 'User not found'
+          });
+        }
+
+        const user = rows[0];
+
+        // Update last biometric login timestamp
+        await pool.execute(
+          'UPDATE users SET last_biometric_login = NOW() WHERE id = ?',
+          [userIdBinary]
+        );
+
+        res.json({
+          success: true,
+          user: {
+            id: user.id,
+            fullName: user.full_name,
+            email: user.email,
+            phone: user.phone,
+            avatarUrl: user.avatar_url,
+            twoFactorEnabled: user.two_factor_enabled === 1,
+            biometricEnabled: user.biometric_enabled === 1,
+            createdAt: user.created_at
+          },
+          token: token
+        });
+      } catch (error) {
+        console.error('Error validating token:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Server error'
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error in biometric validation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to validate biometric login'
+    });
+  }
+});
+
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Backend server running on http://${HOST}:${PORT}`);
   console.log(`📝 API endpoints available at http://${HOST}:${PORT}/api`);
