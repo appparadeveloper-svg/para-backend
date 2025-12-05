@@ -589,7 +589,8 @@ app.post('/api/auth/login', async (req, res) => {
           fullName: user.full_name,
           email: user.email,
           avatarUrl: user.avatar_url || null,
-          emailVerified: user.email_verified || false
+          emailVerified: user.email_verified || false,
+          twoFactorEnabled: user.two_factor_enabled || false
         }
       });
     }
@@ -609,7 +610,8 @@ app.post('/api/auth/login', async (req, res) => {
         fullName: user.full_name,
         email: user.email,
         avatarUrl: user.avatar_url || null,
-        emailVerified: user.email_verified || false
+        emailVerified: user.email_verified || false,
+        twoFactorEnabled: user.two_factor_enabled || false
       }
     });
   } catch (error) {
@@ -948,6 +950,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) AS email,
               avatar_url,
               email_verified,
+              two_factor_enabled,
               created_at, updated_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
@@ -960,6 +963,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       email: u.email,
       avatarUrl: u.avatar_url || null,
       emailVerified: u.email_verified || false,
+      twoFactorEnabled: u.two_factor_enabled || false,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
@@ -2496,7 +2500,8 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         fullName: user.full_name,
         email: user.email,
         avatarUrl: user.avatar_url || null,
-        emailVerified: user.email_verified || false
+        emailVerified: user.email_verified || false,
+        twoFactorEnabled: user.two_factor_enabled || false
       }
     });
   } catch (error) {
