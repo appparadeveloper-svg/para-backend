@@ -2090,19 +2090,20 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
       length: 32
     });
 
-    // Generate QR code
-    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
-
     // Store the secret temporarily (encrypted) - not enabled yet
     await pool.execute(
       'UPDATE users SET two_factor_secret = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
       [secret.base32, userIdBinary]
     );
 
+    // Return the TOTP URL for QR code generation on client side
+    console.log('🔐 2FA Setup - otpauth_url:', secret.otpauth_url);
+    console.log('🔐 2FA Setup - otpauth_url length:', secret.otpauth_url.length);
+    
     res.json({
       success: true,
       secret: secret.base32,
-      qrCode: qrCodeUrl,
+      otpauthUrl: secret.otpauth_url,
       message: 'Scan the QR code with your authenticator app'
     });
   } catch (error) {
