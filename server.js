@@ -2783,12 +2783,17 @@ app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     // Parse backup codes JSON
     const backupCodes = JSON.parse(users2[0].backup_codes);
 
-    res.json({
-      success: true,
-      backupCodes: backupCodes.map(c => ({
+    // Filter out any invalid codes and ensure proper format
+    const validCodes = backupCodes
+      .filter(c => c && c.code && typeof c.code === 'string')
+      .map(c => ({
         code: c.code,
         used: c.used || false
-      }))
+      }));
+
+    res.json({
+      success: true,
+      backupCodes: validCodes
     });
   } catch (error) {
     console.error('Error getting backup codes:', error);
