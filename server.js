@@ -129,6 +129,22 @@ function binaryToUuid(binUuid) {
   return hex;
 }
 
+// Helper function to format user object for API responses
+function formatUserResponse(user) {
+  const userUuid = binaryToUuid(user.id);
+  const isSocialLogin = !!(user.google_id || user.facebook_id);
+  
+  return {
+    id: userUuid,
+    fullName: user.full_name,
+    email: user.email,
+    avatarUrl: user.avatar_url || user.photo_url || null,
+    emailVerified: user.email_verified || false,
+    twoFactorEnabled: user.two_factor_enabled || false,
+    isSocialLogin: isSocialLogin,
+  };
+}
+
 // =============================
 // Cloudinary configuration
 // =============================
@@ -584,14 +600,7 @@ app.post('/api/auth/login', async (req, res) => {
         message: '2FA verification required',
         requires2FA: true,
         userId: userUuid,
-        user: {
-          id: userUuid,
-          fullName: user.full_name,
-          email: user.email,
-          avatarUrl: user.avatar_url || null,
-          emailVerified: user.email_verified || false,
-          twoFactorEnabled: user.two_factor_enabled || false
-        }
+        user: formatUserResponse(user)
       });
     }
 
@@ -605,14 +614,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       message: 'Login successful',
       token,
-      user: {
-        id: userUuid,
-        fullName: user.full_name,
-        email: user.email,
-        avatarUrl: user.avatar_url || null,
-        emailVerified: user.email_verified || false,
-        twoFactorEnabled: user.two_factor_enabled || false
-      }
+      user: formatUserResponse(user)
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -761,14 +763,7 @@ app.post('/api/auth/facebook', async (req, res) => {
         message: '2FA verification required',
         requires2FA: true,
         userId: userUuid,
-        user: {
-          id: userUuid,
-          fullName: user.full_name,
-          email: user.email,
-          avatarUrl: user.avatar_url,
-          emailVerified: user.email_verified || true,
-          twoFactorEnabled: user.two_factor_enabled || false
-        }
+        user: formatUserResponse(user)
       });
     }
 
@@ -784,24 +779,13 @@ app.post('/api/auth/facebook', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // Prepare user response
-    const userResponse = {
-      id: userUuid,
-      email: user.email,
-      fullName: user.full_name,
-      avatarUrl: user.avatar_url,
-      facebookId: user.facebook_id,
-      emailVerified: user.email_verified || true, // Facebook emails are pre-verified
-      twoFactorEnabled: user.two_factor_enabled || false
-    };
-
     // Return success response
     return res.status(isNewUser ? 201 : 200).json({
       message: isNewUser 
         ? 'Account created successfully with Facebook' 
         : 'Logged in successfully with Facebook',
       token: token,
-      user: userResponse
+      user: formatUserResponse(user)
     });
 
   } catch (error) {
@@ -953,14 +937,7 @@ app.post('/api/auth/google', async (req, res) => {
         message: '2FA verification required',
         requires2FA: true,
         userId: userUuid,
-        user: {
-          id: userUuid,
-          fullName: user.full_name,
-          email: user.email,
-          avatarUrl: user.avatar_url,
-          emailVerified: user.email_verified || true,
-          twoFactorEnabled: user.two_factor_enabled || false
-        }
+        user: formatUserResponse(user)
       });
     }
 
@@ -976,24 +953,13 @@ app.post('/api/auth/google', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // Prepare user response
-    const userResponse = {
-      id: userUuid,
-      email: user.email,
-      fullName: user.full_name,
-      avatarUrl: user.avatar_url,
-      googleId: user.google_id,
-      emailVerified: user.email_verified || true, // Google emails are pre-verified
-      twoFactorEnabled: user.two_factor_enabled || false
-    };
-
     // Return success response
     return res.status(isNewUser ? 201 : 200).json({
       message: isNewUser 
         ? 'Account created successfully with Google' 
         : 'Logged in successfully with Google',
       token: token,
-      user: userResponse
+      user: formatUserResponse(user)
     });
 
   } catch (error) {
@@ -2134,6 +2100,64 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
   }
 });
 
+// Verify password endpoint (for security-sensitive operations)
+app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ 
+        success: false,
+        valid: false,
+        message: 'Password is required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    // Get user's password hash
+    const [users] = await pool.execute(
+      'SELECT password FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        valid: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+
+    // Check if user has a password (social login users don't)
+    if (!user.password) {
+      return res.status(400).json({ 
+        success: false,
+        valid: false,
+        message: 'Password verification not available for social login accounts' 
+      });
+    }
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, user.password);
+
+    res.json({ 
+      success: true,
+      valid: isValid
+    });
+  } catch (error) {
+    console.error('Error verifying password:', error);
+    res.status(500).json({ 
+      success: false,
+      valid: false,
+      message: 'Server error' 
+    });
+  }
+});
+
 // ============================================================================
 // Two-Factor Authentication (2FA) Endpoints
 // ============================================================================
@@ -2141,7 +2165,7 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 // Setup 2FA - Generate secret and QR code
 app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, password } = req.body;
 
     if (!userId) {
       return res.status(400).json({ 
@@ -2150,15 +2174,23 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
       });
     }
 
+    if (!password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password is required for security verification' 
+      });
+    }
+
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    // Get user details
+    // Get user details including password
     const [users] = await pool.execute(
       `SELECT 
         id,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
-        two_factor_enabled
+        two_factor_enabled,
+        password
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
@@ -2172,6 +2204,23 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+
+    // Check if user has a password (social login users don't)
+    if (!user.password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts' 
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
+    }
 
     // Generate secret
     const secret = speakeasy.generateSecret({
@@ -2780,14 +2829,22 @@ app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
 });
 
 // Get backup codes
-app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
+app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const userIdBinary = uuidToBinary(userId);
+    const { password } = req.body;
 
-    // Check if user has 2FA enabled
+    if (!password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password is required' 
+      });
+    }
+
+    // Get user with password and 2FA status
     const [users] = await pool.execute(
-      'SELECT two_factor_enabled FROM users WHERE id = ?',
+      'SELECT two_factor_enabled, password, backup_codes FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2798,20 +2855,33 @@ app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    if (!users[0].two_factor_enabled) {
+    const user = users[0];
+
+    if (!user.two_factor_enabled) {
       return res.status(400).json({ 
         success: false,
         message: '2FA is not enabled' 
       });
     }
 
-    // Get backup codes from users table
-    const [users2] = await pool.execute(
-      'SELECT backup_codes FROM users WHERE id = ?',
-      [userIdBinary]
-    );
+    // Check if user has a password (social login users don't)
+    if (!user.password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts. Your backup codes were shown when you enabled 2FA.' 
+      });
+    }
 
-    if (!users2[0].backup_codes) {
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
+    }
+
+    if (!user.backup_codes) {
       return res.json({
         success: true,
         backupCodes: []
@@ -2819,7 +2889,7 @@ app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     }
 
     // Parse backup codes JSON
-    const backupCodes = JSON.parse(users2[0].backup_codes);
+    const backupCodes = JSON.parse(user.backup_codes);
 
     // Filter and format codes
     // Handle both old format (array of strings) and new format (array of objects)
@@ -3234,7 +3304,47 @@ app.get('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req,
 app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    const { password } = req.body;
     const userIdBinary = uuidToBinary(userId);
+
+    if (!password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password is required for security verification' 
+      });
+    }
+
+    // Get user password
+    const [users] = await pool.execute(
+      'SELECT password FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+
+    // Check if user has a password (social login users don't)
+    if (!user.password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts' 
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
+    }
 
     // Update user's biometric_enabled status
     await pool.execute(
