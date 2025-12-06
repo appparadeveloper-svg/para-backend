@@ -2767,15 +2767,25 @@ app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    // Get backup codes
-    const [codes] = await pool.execute(
-      'SELECT code, used FROM backup_codes WHERE user_id = ? ORDER BY id',
+    // Get backup codes from users table
+    const [users2] = await pool.execute(
+      'SELECT backup_codes FROM users WHERE id = ?',
       [userIdBinary]
     );
 
+    if (!users2[0].backup_codes) {
+      return res.json({
+        success: true,
+        backupCodes: []
+      });
+    }
+
+    // Parse backup codes JSON
+    const backupCodes = JSON.parse(users2[0].backup_codes);
+
     res.json({
       success: true,
-      backupCodes: codes.map(c => ({
+      backupCodes: backupCodes.map(c => ({
         code: c.code,
         used: c.used || false
       }))
