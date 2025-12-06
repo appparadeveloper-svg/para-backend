@@ -2118,7 +2118,7 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
 
     // Get user's password hash
     const [users] = await pool.execute(
-      'SELECT password FROM users WHERE id = ?',
+      'SELECT password_hash FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2133,7 +2133,7 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
     const user = users[0];
 
     // Check if user has a password (social login users don't)
-    if (!user.password) {
+    if (!user.password_hash) {
       return res.status(400).json({ 
         success: false,
         valid: false,
@@ -2142,7 +2142,7 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
     }
 
     // Verify password
-    const isValid = await bcrypt.compare(password, user.password);
+    const isValid = await bcrypt.compare(password, user.password_hash);
 
     res.json({ 
       success: true,
@@ -2190,7 +2190,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
         id,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
         two_factor_enabled,
-        password
+        password_hash
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
@@ -2206,7 +2206,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     const user = users[0];
 
     // Check if user has a password (social login users don't)
-    if (!user.password) {
+    if (!user.password_hash) {
       return res.status(400).json({ 
         success: false,
         message: 'Password verification not available for social login accounts' 
@@ -2214,7 +2214,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     }
 
     // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({ 
         success: false,
@@ -2844,7 +2844,7 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
 
     // Get user with password and 2FA status
     const [users] = await pool.execute(
-      'SELECT two_factor_enabled, password, backup_codes FROM users WHERE id = ?',
+      'SELECT two_factor_enabled, password_hash, backup_codes FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2865,7 +2865,7 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     }
 
     // Check if user has a password (social login users don't)
-    if (!user.password) {
+    if (!user.password_hash) {
       return res.status(400).json({ 
         success: false,
         message: 'Password verification not available for social login accounts. Your backup codes were shown when you enabled 2FA.' 
@@ -2873,7 +2873,7 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     }
 
     // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({ 
         success: false,
@@ -3316,7 +3316,7 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
 
     // Get user password
     const [users] = await pool.execute(
-      'SELECT password FROM users WHERE id = ?',
+      'SELECT password_hash FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -3330,7 +3330,7 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     const user = users[0];
 
     // Check if user has a password (social login users don't)
-    if (!user.password) {
+    if (!user.password_hash) {
       return res.status(400).json({ 
         success: false,
         message: 'Password verification not available for social login accounts' 
@@ -3338,7 +3338,7 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     }
 
     // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({ 
         success: false,
