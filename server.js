@@ -680,6 +680,7 @@ app.post('/api/auth/facebook', async (req, res) => {
       if (existingUserByEmail.length > 0) {
         // Email exists with regular auth - Link Facebook account
         userIdBinary = existingUserByEmail[0].id;
+        isNewUser = false; // This is an existing user, not a new registration
         
         await pool.execute(
           'UPDATE users SET facebook_id = ?, avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
@@ -860,6 +861,7 @@ app.post('/api/auth/google', async (req, res) => {
       if (existingUserByEmail.length > 0) {
         // Email exists with regular auth - Link Google account
         userIdBinary = existingUserByEmail[0].id;
+        isNewUser = false; // This is an existing user, not a new registration
         
         await pool.execute(
           'UPDATE users SET google_id = ?, avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
