@@ -2741,6 +2741,54 @@ app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
   }
 });
 
+// Get backup codes
+app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Check if user has 2FA enabled
+    const [users] = await pool.execute(
+      'SELECT two_factor_enabled FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    if (!users[0].two_factor_enabled) {
+      return res.status(400).json({ 
+        success: false,
+        message: '2FA is not enabled' 
+      });
+    }
+
+    // Get backup codes
+    const [codes] = await pool.execute(
+      'SELECT code, used FROM backup_codes WHERE user_id = ? ORDER BY id',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      backupCodes: codes.map(c => ({
+        code: c.code,
+        used: c.used || false
+      }))
+    });
+  } catch (error) {
+    console.error('Error getting backup codes:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // allow external access
 
