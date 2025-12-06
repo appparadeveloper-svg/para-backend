@@ -2279,19 +2279,22 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
       backupCodes.push(crypto.randomBytes(4).toString('hex').toUpperCase());
     }
 
-    // Hash backup codes before storing
+    // Hash backup codes and store with metadata
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map(code => bcrypt.hash(code, 10))
+      backupCodes.map(async (code) => ({
+        code: code, // Store plain code (will be shown to user)
+        hash: await bcrypt.hash(code, 10), // Store hash for verification
+        used: false
+      }))
     );
 
     console.log('🔐 Storing backup codes...');
     console.log('🔐 Plain codes count:', backupCodes.length);
     console.log('🔐 Hashed codes count:', hashedBackupCodes.length);
-    console.log('🔐 Sample plain code:', backupCodes[0]);
-    console.log('🔐 Sample hashed code:', hashedBackupCodes[0].substring(0, 20) + '...');
+    console.log('🔐 Sample structure:', JSON.stringify(hashedBackupCodes[0], null, 2));
     console.log('🔐 JSON string length:', JSON.stringify(hashedBackupCodes).length);
 
-    // Enable 2FA and store backup codes (without encryption - already hashed with bcrypt)
+    // Enable 2FA and store backup codes with metadata
     await pool.execute(
       'UPDATE users SET two_factor_enabled = TRUE, backup_codes = ? WHERE id = ?',
       [JSON.stringify(hashedBackupCodes), userIdBinary]
@@ -2427,13 +2430,30 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
       
       // Check if any backup code matches
       for (let i = 0; i < backupCodes.length; i++) {
-        const isMatch = await bcrypt.compare(token, backupCodes[i]);
+        const codeObj = backupCodes[i];
+        
+        // Handle both old format (string) and new format (object)
+        const hash = typeof codeObj === 'string' ? codeObj : codeObj.hash;
+        const isUsed = typeof codeObj === 'object' && codeObj.used;
+        
+        if (isUsed) {
+          continue;
+        }
+        
+        const isMatch = await bcrypt.compare(token, hash);
         if (isMatch) {
           verified = true;
-          // Remove used backup code
-          backupCodes.splice(i, 1);
+          
+          // Mark code as used
+          if (typeof codeObj === 'object') {
+            backupCodes[i].used = true;
+          } else {
+            // Old format: remove the code
+            backupCodes.splice(i, 1);
+          }
+          
           await pool.execute(
-            'UPDATE users SET backup_codes = AES_ENCRYPT(?, ' + encryptionKey + ') WHERE id = ?',
+            'UPDATE users SET backup_codes = ? WHERE id = ?',
             [JSON.stringify(backupCodes), userIdBinary]
           );
           break;
@@ -2557,13 +2577,31 @@ app.post('/api/auth/2fa/login', async (req, res) => {
       // Check if any backup code matches
       console.log(`🔐 Checking ${backupCodes.length} backup codes...`);
       for (let i = 0; i < backupCodes.length; i++) {
-        const isMatch = await bcrypt.compare(token, backupCodes[i]);
+        const codeObj = backupCodes[i];
+        
+        // Handle both old format (string) and new format (object)
+        const hash = typeof codeObj === 'string' ? codeObj : codeObj.hash;
+        const isUsed = typeof codeObj === 'object' && codeObj.used;
+        
+        if (isUsed) {
+          console.log(`⏭️  Skipping used code at index ${i}`);
+          continue;
+        }
+        
+        const isMatch = await bcrypt.compare(token, hash);
         if (isMatch) {
           console.log(`✅ Backup code matched at index ${i}`);
           verified = true;
-          // Remove used backup code
-          backupCodes.splice(i, 1);
-          console.log(`🔐 Remaining backup codes: ${backupCodes.length}`);
+          
+          // Mark code as used (don't remove it so user can see it was used)
+          if (typeof codeObj === 'object') {
+            backupCodes[i].used = true;
+          } else {
+            // Old format: remove the code
+            backupCodes.splice(i, 1);
+          }
+          
+          console.log(`🔐 Remaining unused codes: ${backupCodes.filter(c => typeof c === 'string' || !c.used).length}`);
           await pool.execute(
             'UPDATE users SET backup_codes = ? WHERE id = ?',
             [JSON.stringify(backupCodes), userIdBinary]
@@ -2783,13 +2821,25 @@ app.get('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     // Parse backup codes JSON
     const backupCodes = JSON.parse(users2[0].backup_codes);
 
-    // Filter out any invalid codes and ensure proper format
+    // Filter and format codes
+    // Handle both old format (array of strings) and new format (array of objects)
     const validCodes = backupCodes
-      .filter(c => c && c.code && typeof c.code === 'string')
-      .map(c => ({
-        code: c.code,
-        used: c.used || false
-      }));
+      .filter(c => c != null)
+      .map(c => {
+        // Old format: just a hash string (can't show to user)
+        if (typeof c === 'string') {
+          return null; // Can't display hashed codes
+        }
+        // New format: object with code, hash, and used flag
+        if (c.code && typeof c.code === 'string') {
+          return {
+            code: c.code,
+            used: c.used || false
+          };
+        }
+        return null;
+      })
+      .filter(c => c !== null);
 
     res.json({
       success: true,
