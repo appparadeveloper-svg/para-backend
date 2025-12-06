@@ -3124,10 +3124,18 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         const userId = decoded.userId;
         const userIdBinary = uuidToBinary(userId);
 
+        const encryptionKey = getEncryptionKeyQuery();
+
         // Get user data (using HEX instead of BIN_TO_UUID for MySQL 5.7 compatibility)
         const [rows] = await pool.execute(
-          `SELECT HEX(id) as id, full_name, email, phone, avatar_url, 
-                  two_factor_enabled, biometric_enabled, created_at
+          `SELECT HEX(id) as id, 
+                  CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+                  CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+                  avatar_url, 
+                  email_verified,
+                  two_factor_enabled, 
+                  biometric_enabled, 
+                  created_at
            FROM users 
            WHERE id = ?`,
           [userIdBinary]
@@ -3162,8 +3170,8 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
             id: formattedId,
             fullName: user.full_name,
             email: user.email,
-            phone: user.phone,
-            avatarUrl: user.avatar_url,
+            avatarUrl: user.avatar_url || null,
+            emailVerified: user.email_verified || false,
             twoFactorEnabled: user.two_factor_enabled === 1,
             biometricEnabled: user.biometric_enabled === 1,
             createdAt: user.created_at
