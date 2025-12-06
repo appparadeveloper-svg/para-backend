@@ -745,8 +745,17 @@ app.post('/api/auth/facebook', async (req, res) => {
     // Convert binary UUID to string
     const userUuid = binaryToUuid(user.id);
 
+    // Debug logging for 2FA check
+    console.log('🔐 Facebook Auth - 2FA Check:');
+    console.log('  User ID:', userUuid);
+    console.log('  Email:', user.email);
+    console.log('  two_factor_enabled:', user.two_factor_enabled, '(type:', typeof user.two_factor_enabled, ')');
+    console.log('  isNewUser:', isNewUser);
+    console.log('  Condition (user.two_factor_enabled && !isNewUser):', user.two_factor_enabled && !isNewUser);
+
     // Check if 2FA is enabled
     if (user.two_factor_enabled && !isNewUser) {
+      console.log('✅ 2FA required - returning requires2FA response');
       // Don't generate full token yet, return partial response requiring 2FA
       return res.json({
         message: '2FA verification required',
@@ -762,6 +771,8 @@ app.post('/api/auth/facebook', async (req, res) => {
         }
       });
     }
+
+    console.log('⚠️ 2FA not required - proceeding with token generation');
 
     // Generate JWT token (only if 2FA is not enabled or new user)
     const token = jwt.sign(
@@ -926,8 +937,17 @@ app.post('/api/auth/google', async (req, res) => {
     // Convert binary UUID to string
     const userUuid = binaryToUuid(user.id);
 
+    // Debug logging for 2FA check
+    console.log('🔐 Google Auth - 2FA Check:');
+    console.log('  User ID:', userUuid);
+    console.log('  Email:', user.email);
+    console.log('  two_factor_enabled:', user.two_factor_enabled, '(type:', typeof user.two_factor_enabled, ')');
+    console.log('  isNewUser:', isNewUser);
+    console.log('  Condition (user.two_factor_enabled && !isNewUser):', user.two_factor_enabled && !isNewUser);
+
     // Check if 2FA is enabled
     if (user.two_factor_enabled && !isNewUser) {
+      console.log('✅ 2FA required - returning requires2FA response');
       // Don't generate full token yet, return partial response requiring 2FA
       return res.json({
         message: '2FA verification required',
@@ -943,6 +963,8 @@ app.post('/api/auth/google', async (req, res) => {
         }
       });
     }
+
+    console.log('⚠️ 2FA not required - proceeding with token generation');
 
     // Generate JWT token (only if 2FA is not enabled or new user)
     const token = jwt.sign(
