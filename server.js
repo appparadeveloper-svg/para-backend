@@ -2603,6 +2603,89 @@ app.post('/api/auth/2fa/login', async (req, res) => {
   }
 });
 
+// Complete 2FA login with biometric (bypass TOTP code)
+app.post('/api/auth/2fa/login/biometric', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    console.log('🔐 2FA biometric login request for user:', userId);
+
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'User ID is required' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user data
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        avatar_url,
+        email_verified,
+        two_factor_enabled
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      console.log('❌ User not found');
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const user = users[0];
+    const userUuid = binaryToUuid(user.id);
+
+    if (!user.two_factor_enabled) {
+      console.log('❌ 2FA not enabled for user');
+      return res.status(400).json({ 
+        success: false,
+        message: '2FA is not enabled for this account' 
+      });
+    }
+
+    console.log('✅ User verified, generating token');
+
+    // Generate full JWT token (biometric already verified on client side)
+    const jwtToken = jwt.sign(
+      { userId: userUuid, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    console.log('✅ 2FA biometric login successful');
+
+    res.json({
+      success: true,
+      message: 'Login successful with biometric',
+      token: jwtToken,
+      user: {
+        id: userUuid,
+        fullName: user.full_name,
+        email: user.email,
+        avatarUrl: user.avatar_url || null,
+        emailVerified: user.email_verified || false,
+        twoFactorEnabled: user.two_factor_enabled || false
+      }
+    });
+  } catch (error) {
+    console.error('Error completing 2FA biometric login:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
 // Get 2FA status
 app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
   try {
