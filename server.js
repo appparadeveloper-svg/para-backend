@@ -2184,13 +2184,14 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    // Get user details including password
+    // Get user details including password and social login status
     const [users] = await pool.execute(
       `SELECT 
         id,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
         two_factor_enabled,
-        password_hash
+        password_hash,
+        is_social_login
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
@@ -2204,22 +2205,33 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+    const isSocialLogin = user.is_social_login === 1;
 
-    // Check if user has a password (social login users don't)
-    if (!user.password_hash) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Password verification not available for social login accounts' 
-      });
-    }
+    // For social login users, accept the special verification token
+    if (isSocialLogin) {
+      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Social login users must verify with biometric authentication' 
+        });
+      }
+      // Social login user verified via biometric, proceed to setup
+    } else {
+      // Regular user - verify password
+      if (!user.password_hash) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Password not set for this account' 
+        });
+      }
 
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    if (!isPasswordValid) {
-      return res.status(401).json({ 
-        success: false,
-        message: 'Invalid password' 
-      });
+      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid password' 
+        });
+      }
     }
 
     // Generate secret
@@ -2842,9 +2854,9 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    // Get user with password and 2FA status
+    // Get user with password, social login status, and 2FA status
     const [users] = await pool.execute(
-      'SELECT two_factor_enabled, password_hash, backup_codes FROM users WHERE id = ?',
+      'SELECT two_factor_enabled, password_hash, backup_codes, is_social_login FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2864,21 +2876,33 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check if user has a password (social login users don't)
-    if (!user.password_hash) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Password verification not available for social login accounts. Your backup codes were shown when you enabled 2FA.' 
-      });
-    }
+    const isSocialLogin = user.is_social_login === 1;
 
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    if (!isPasswordValid) {
-      return res.status(401).json({ 
-        success: false,
-        message: 'Invalid password' 
-      });
+    // For social login users, accept the special verification token
+    if (isSocialLogin) {
+      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Social login users must verify with biometric authentication' 
+        });
+      }
+      // Social login user verified via biometric, proceed to show backup codes
+    } else {
+      // Regular user - verify password
+      if (!user.password_hash) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Password not set for this account' 
+        });
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid password' 
+        });
+      }
     }
 
     if (!user.backup_codes) {
@@ -3314,9 +3338,9 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
       });
     }
 
-    // Get user password
+    // Get user password and social login status
     const [users] = await pool.execute(
-      'SELECT password_hash FROM users WHERE id = ?',
+      'SELECT password_hash, is_social_login FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -3328,22 +3352,33 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+    const isSocialLogin = user.is_social_login === 1;
 
-    // Check if user has a password (social login users don't)
-    if (!user.password_hash) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Password verification not available for social login accounts' 
-      });
-    }
+    // For social login users, accept the special verification token
+    if (isSocialLogin) {
+      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Social login users must verify with biometric authentication' 
+        });
+      }
+      // Social login user verified via biometric, proceed to enable
+    } else {
+      // Regular user - verify password
+      if (!user.password_hash) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Password not set for this account' 
+        });
+      }
 
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    if (!isPasswordValid) {
-      return res.status(401).json({ 
-        success: false,
-        message: 'Invalid password' 
-      });
+      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid password' 
+        });
+      }
     }
 
     // Update user's biometric_enabled status
