@@ -474,6 +474,8 @@ app.post('/api/auth/login', async (req, res) => {
         old_password_hash,
         password_changed_at,
         two_factor_enabled,
+        google_id,
+        facebook_id,
         is_locked,
         failed_login_attempts,
         locked_until,
