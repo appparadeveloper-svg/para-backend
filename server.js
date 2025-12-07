@@ -985,8 +985,6 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               avatar_url,
               email_verified,
               two_factor_enabled,
-              google_id,
-              facebook_id,
               created_at, updated_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
@@ -1000,7 +998,6 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       avatarUrl: u.avatar_url || null,
       emailVerified: u.email_verified || false,
       twoFactorEnabled: u.two_factor_enabled || false,
-      isSocialLogin: !!(u.google_id || u.facebook_id),
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
@@ -2170,10 +2167,6 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
   try {
     const { userId, password } = req.body;
 
-    console.log('🔐 2FA Setup - Request received');
-    console.log('🔐 2FA Setup - User ID:', userId);
-    console.log('🔐 2FA Setup - Password provided:', !!password);
-
     if (!userId) {
       return res.status(400).json({ 
         success: false,
@@ -2191,23 +2184,17 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    console.log('🔐 2FA Setup - Querying database...');
-
-    // Get user details including password and social login status
+    // Get user details including password
     const [users] = await pool.execute(
       `SELECT 
         id,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
         two_factor_enabled,
-        password_hash,
-        google_id,
-        facebook_id
+        password_hash
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
     );
-
-    console.log('🔐 2FA Setup - Users found:', users.length);
 
     if (users.length === 0) {
       return res.status(404).json({ 
@@ -2217,44 +2204,22 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
-    const isSocialLogin = !!(user.google_id || user.facebook_id);
 
-    console.log('🔐 2FA Setup - User email:', user.email);
-    console.log('🔐 2FA Setup - Is social login:', isSocialLogin);
-    console.log('🔐 2FA Setup - Has password_hash:', !!user.password_hash);
+    // Check if user has a password (social login users don't)
+    if (!user.password_hash) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts' 
+      });
+    }
 
-    // For social login users, accept the special verification token
-    if (isSocialLogin) {
-      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
-        console.log('🔐 2FA Setup - Social login user without proper verification');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Social login users must verify with biometric authentication' 
-        });
-      }
-      console.log('🔐 2FA Setup - Social login user verified via biometric');
-      // Social login user verified via biometric, proceed to setup
-    } else {
-      // Regular user - verify password
-      if (!user.password_hash) {
-        console.log('🔐 2FA Setup - User has no password_hash');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Password not set for this account' 
-        });
-      }
-
-      console.log('🔐 2FA Setup - Verifying password...');
-      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-      console.log('🔐 2FA Setup - Password valid:', isPasswordValid);
-      
-      if (!isPasswordValid) {
-        console.log('🔐 2FA Setup - Invalid password provided');
-        return res.status(401).json({ 
-          success: false,
-          message: 'Invalid password' 
-        });
-      }
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
     }
 
     // Generate secret
@@ -2295,12 +2260,10 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
       message: 'Scan the QR code with your authenticator app'
     });
   } catch (error) {
-    console.error('❌ Error setting up 2FA:', error);
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
+    console.error('Error setting up 2FA:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Server error: ' + error.message 
+      message: 'Server error' 
     });
   }
 });
@@ -2739,8 +2702,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         email: user.email,
         avatarUrl: user.avatar_url || null,
         emailVerified: user.email_verified || false,
-        twoFactorEnabled: user.two_factor_enabled || false,
-        isSocialLogin: !!(user.google_id || user.facebook_id)
+        twoFactorEnabled: user.two_factor_enabled || false
       }
     });
   } catch (error) {
@@ -2823,8 +2785,7 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
         email: user.email,
         avatarUrl: user.avatar_url || null,
         emailVerified: user.email_verified || false,
-        twoFactorEnabled: user.two_factor_enabled || false,
-        isSocialLogin: !!(user.google_id || user.facebook_id)
+        twoFactorEnabled: user.two_factor_enabled || false
       }
     });
   } catch (error) {
@@ -2874,10 +2835,6 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const { password } = req.body;
 
-    console.log('🔑 Backup Codes - Request received');
-    console.log('🔑 Backup Codes - User ID:', userId);
-    console.log('🔑 Backup Codes - Password provided:', !!password);
-
     if (!password) {
       return res.status(400).json({ 
         success: false,
@@ -2885,15 +2842,11 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    console.log('🔑 Backup Codes - Querying database...');
-
-    // Get user with password, social login status, and 2FA status
+    // Get user with password and 2FA status
     const [users] = await pool.execute(
-      'SELECT two_factor_enabled, password_hash, backup_codes, google_id, facebook_id FROM users WHERE id = ?',
+      'SELECT two_factor_enabled, password_hash, backup_codes FROM users WHERE id = ?',
       [userIdBinary]
     );
-
-    console.log('🔑 Backup Codes - Users found:', users.length);
 
     if (users.length === 0) {
       return res.status(404).json({ 
@@ -2904,10 +2857,6 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
 
     const user = users[0];
 
-    console.log('🔑 Backup Codes - 2FA enabled:', user.two_factor_enabled);
-    console.log('🔑 Backup Codes - Has password_hash:', !!user.password_hash);
-    console.log('🔑 Backup Codes - Has backup_codes:', !!user.backup_codes);
-
     if (!user.two_factor_enabled) {
       return res.status(400).json({ 
         success: false,
@@ -2915,42 +2864,21 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    const isSocialLogin = !!(user.google_id || user.facebook_id);
+    // Check if user has a password (social login users don't)
+    if (!user.password_hash) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts. Your backup codes were shown when you enabled 2FA.' 
+      });
+    }
 
-    console.log('🔑 Backup Codes - Is social login:', isSocialLogin);
-
-    // For social login users, accept the special verification token
-    if (isSocialLogin) {
-      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
-        console.log('🔑 Backup Codes - Social login user without proper verification');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Social login users must verify with biometric authentication' 
-        });
-      }
-      console.log('🔑 Backup Codes - Social login user verified via biometric');
-      // Social login user verified via biometric, proceed to show backup codes
-    } else {
-      // Regular user - verify password
-      if (!user.password_hash) {
-        console.log('🔑 Backup Codes - User has no password_hash');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Password not set for this account' 
-        });
-      }
-
-      console.log('🔑 Backup Codes - Verifying password...');
-      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-      console.log('🔑 Backup Codes - Password valid:', isPasswordValid);
-      
-      if (!isPasswordValid) {
-        console.log('🔑 Backup Codes - Invalid password provided');
-        return res.status(401).json({ 
-          success: false,
-          message: 'Invalid password' 
-        });
-      }
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
     }
 
     if (!user.backup_codes) {
@@ -2988,12 +2916,10 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       backupCodes: validCodes
     });
   } catch (error) {
-    console.error('❌ Error getting backup codes:', error);
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
+    console.error('Error getting backup codes:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Server error: ' + error.message 
+      message: 'Server error' 
     });
   }
 });
@@ -3381,10 +3307,6 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     const { password } = req.body;
     const userIdBinary = uuidToBinary(userId);
 
-    console.log('👆 Biometric Enable - Request received');
-    console.log('👆 Biometric Enable - User ID:', userId);
-    console.log('👆 Biometric Enable - Password provided:', !!password);
-
     if (!password) {
       return res.status(400).json({ 
         success: false,
@@ -3392,15 +3314,11 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
       });
     }
 
-    console.log('👆 Biometric Enable - Querying database...');
-
-    // Get user password and social login status
+    // Get user password
     const [users] = await pool.execute(
-      'SELECT password_hash, google_id, facebook_id FROM users WHERE id = ?',
+      'SELECT password_hash FROM users WHERE id = ?',
       [userIdBinary]
     );
-
-    console.log('👆 Biometric Enable - Users found:', users.length);
 
     if (users.length === 0) {
       return res.status(404).json({ 
@@ -3410,43 +3328,22 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
-    const isSocialLogin = !!(user.google_id || user.facebook_id);
 
-    console.log('👆 Biometric Enable - Is social login:', isSocialLogin);
-    console.log('👆 Biometric Enable - Has password_hash:', !!user.password_hash);
+    // Check if user has a password (social login users don't)
+    if (!user.password_hash) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password verification not available for social login accounts' 
+      });
+    }
 
-    // For social login users, accept the special verification token
-    if (isSocialLogin) {
-      if (password !== 'SOCIAL_LOGIN_VERIFIED') {
-        console.log('👆 Biometric Enable - Social login user without proper verification');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Social login users must verify with biometric authentication' 
-        });
-      }
-      console.log('👆 Biometric Enable - Social login user verified via biometric');
-      // Social login user verified via biometric, proceed to enable
-    } else {
-      // Regular user - verify password
-      if (!user.password_hash) {
-        console.log('👆 Biometric Enable - User has no password_hash');
-        return res.status(400).json({ 
-          success: false,
-          message: 'Password not set for this account' 
-        });
-      }
-
-      console.log('👆 Biometric Enable - Verifying password...');
-      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-      console.log('👆 Biometric Enable - Password valid:', isPasswordValid);
-      
-      if (!isPasswordValid) {
-        console.log('👆 Biometric Enable - Invalid password provided');
-        return res.status(401).json({ 
-          success: false,
-          message: 'Invalid password' 
-        });
-      }
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid password' 
+      });
     }
 
     // Update user's biometric_enabled status
@@ -3460,12 +3357,10 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
       message: 'Biometric authentication enabled successfully'
     });
   } catch (error) {
-    console.error('❌ Error enabling biometric:', error);
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
+    console.error('Error enabling biometric:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to enable biometric authentication: ' + error.message
+      message: 'Failed to enable biometric authentication'
     });
   }
 });
@@ -3608,7 +3503,6 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
             avatarUrl: user.avatar_url || null,
             emailVerified: user.email_verified || false,
             twoFactorEnabled: user.two_factor_enabled === 1,
-            isSocialLogin: !!(user.google_id || user.facebook_id),
             biometricEnabled: user.biometric_enabled === 1,
             createdAt: user.created_at
           },
