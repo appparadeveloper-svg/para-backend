@@ -2177,13 +2177,15 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    // Get user details including password
+    // Get user details including password and social login info
     const [users] = await pool.execute(
       `SELECT 
         id,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
         two_factor_enabled,
-        password_hash
+        password_hash,
+        google_id,
+        facebook_id
        FROM users 
        WHERE id = ?`,
       [userIdBinary]
@@ -2197,9 +2199,12 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+    
+    // Check if this is a social login account (has google_id or facebook_id)
+    const isSocialLogin = !!(user.google_id || user.facebook_id);
 
-    // Verify password only if user has a password (non-social login)
-    if (user.password_hash) {
+    // Verify password only for non-social login accounts
+    if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
         return res.status(400).json({ 
@@ -2831,9 +2836,9 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const { password } = req.body;
 
-    // Get user with password and 2FA status
+    // Get user with password, 2FA status, and social login info
     const [users] = await pool.execute(
-      'SELECT two_factor_enabled, password_hash, backup_codes FROM users WHERE id = ?',
+      'SELECT two_factor_enabled, password_hash, backup_codes, google_id, facebook_id FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2853,8 +2858,11 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
       });
     }
 
-    // Verify password only if user has a password (non-social login)
-    if (user.password_hash) {
+    // Check if this is a social login account (has google_id or facebook_id)
+    const isSocialLogin = !!(user.google_id || user.facebook_id);
+
+    // Verify password only for non-social login accounts
+    if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
         return res.status(400).json({ 
@@ -3299,9 +3307,9 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     const { password } = req.body;
     const userIdBinary = uuidToBinary(userId);
 
-    // Get user password
+    // Get user password and social login info
     const [users] = await pool.execute(
-      'SELECT password_hash FROM users WHERE id = ?',
+      'SELECT password_hash, google_id, facebook_id FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -3313,9 +3321,12 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+    
+    // Check if this is a social login account (has google_id or facebook_id)
+    const isSocialLogin = !!(user.google_id || user.facebook_id);
 
-    // Verify password only if user has a password (non-social login)
-    if (user.password_hash) {
+    // Verify password only for non-social login accounts
+    if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
         return res.status(400).json({ 
