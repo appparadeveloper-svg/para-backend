@@ -985,6 +985,8 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               avatar_url,
               email_verified,
               two_factor_enabled,
+              google_id,
+              facebook_id,
               created_at, updated_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
@@ -998,6 +1000,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       avatarUrl: u.avatar_url || null,
       emailVerified: u.email_verified || false,
       twoFactorEnabled: u.two_factor_enabled || false,
+      isSocialLogin: !!(u.google_id || u.facebook_id),
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
@@ -2736,7 +2739,8 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         email: user.email,
         avatarUrl: user.avatar_url || null,
         emailVerified: user.email_verified || false,
-        twoFactorEnabled: user.two_factor_enabled || false
+        twoFactorEnabled: user.two_factor_enabled || false,
+        isSocialLogin: !!(user.google_id || user.facebook_id)
       }
     });
   } catch (error) {
@@ -2819,7 +2823,8 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
         email: user.email,
         avatarUrl: user.avatar_url || null,
         emailVerified: user.email_verified || false,
-        twoFactorEnabled: user.two_factor_enabled || false
+        twoFactorEnabled: user.two_factor_enabled || false,
+        isSocialLogin: !!(user.google_id || user.facebook_id)
       }
     });
   } catch (error) {
@@ -3603,6 +3608,7 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
             avatarUrl: user.avatar_url || null,
             emailVerified: user.email_verified || false,
             twoFactorEnabled: user.two_factor_enabled === 1,
+            isSocialLogin: !!(user.google_id || user.facebook_id),
             biometricEnabled: user.biometric_enabled === 1,
             createdAt: user.created_at
           },
