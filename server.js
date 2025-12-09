@@ -142,6 +142,8 @@ function formatUserResponse(user) {
     emailVerified: user.email_verified || false,
     twoFactorEnabled: user.two_factor_enabled || false,
     isSocialLogin: isSocialLogin,
+    googleId: user.google_id || null,
+    facebookId: user.facebook_id || null,
   };
 }
 
@@ -1004,6 +1006,8 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       emailVerified: u.email_verified || false,
       twoFactorEnabled: u.two_factor_enabled || false,
       isSocialLogin: isSocialLogin,
+      googleId: u.google_id || null,
+      facebookId: u.facebook_id || null,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
