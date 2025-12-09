@@ -987,12 +987,15 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               avatar_url,
               email_verified,
               two_factor_enabled,
+              google_id,
+              facebook_id,
               created_at, updated_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
     );
     if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
     const u = rows[0];
+    const isSocialLogin = !!(u.google_id || u.facebook_id);
     res.json({
       id: binaryToUuid(u.id),
       fullName: u.full_name,
@@ -1000,6 +1003,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       avatarUrl: u.avatar_url || null,
       emailVerified: u.email_verified || false,
       twoFactorEnabled: u.two_factor_enabled || false,
+      isSocialLogin: isSocialLogin,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     });
