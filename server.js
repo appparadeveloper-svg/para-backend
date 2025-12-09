@@ -3542,3 +3542,145 @@ app.listen(PORT, HOST, () => {
   console.log(`🤖 Enhanced chat features enabled`);
   ensureAvatarColumn();
 });
+
+// =============================
+// Privacy Preferences Endpoint
+// =============================
+
+// Update privacy preferences (location sharing, analytics)
+app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) => {
+  try {
+    const { preferenceType, enabled } = req.body;
+    const userId = req.user.userId;
+
+    if (!preferenceType || enabled === undefined) {
+      return res.status(400).json({ 
+        message: 'preferenceType and enabled are required' 
+      });
+    }
+
+    // Validate preference type
+    const validTypes = ['location_sharing', 'analytics'];
+    if (!validTypes.includes(preferenceType)) {
+      return res.status(400).json({ 
+        message: 'Invalid preference type. Must be location_sharing or analytics' 
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+
+    // Check if user_preferences table exists, if not create it
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id BINARY(16) PRIMARY KEY,
+        location_sharing TINYINT(1) DEFAULT 0,
+        analytics TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Insert or update preference
+    await pool.execute(`
+      INSERT INTO user_preferences (user_id, ${preferenceType}, updated_at)
+      VALUES (?, ?, NOW())
+      ON DUPLICATE KEY UPDATE ${preferenceType} = ?, updated_at = NOW()
+    `, [userIdBinary, enabled ? 1 : 0, enabled ? 1 : 0]);
+
+    res.json({ 
+      success: true, 
+      message: 'Privacy preference updated successfully' 
+    });
+  } catch (error) {
+    console.error('Error updating privacy preference:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get privacy preferences
+app.get('/api/users/privacy-preferences', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    const [rows] = await pool.execute(
+      'SELECT location_sharing, analytics FROM user_preferences WHERE user_id = ?',
+      [userIdBinary]
+    );
+
+    if (rows.length === 0) {
+      // Return defaults if no preferences set
+      return res.json({
+        locationSharing: false,
+        analytics: true
+      });
+    }
+
+    res.json({
+      locationSharing: rows[0].location_sharing === 1,
+      analytics: rows[0].analytics === 1
+    });
+  } catch (error) {
+    console.error('Error getting privacy preferences:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// =============================
+// Account Deletion Endpoint
+// =============================
+
+// Delete user account
+app.delete('/api/users/account', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { password } = req.body;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Get user details
+    const encryptionKey = getEncryptionKeyQuery();
+    const [users] = await pool.execute(
+      `SELECT 
+        password_hash,
+        google_id,
+        facebook_id
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = users[0];
+    const isSocialLogin = !!(user.google_id || user.facebook_id);
+
+    // For email users, verify password
+    if (!isSocialLogin) {
+      if (!password) {
+        return res.status(400).json({ 
+          message: 'Password is required to delete account' 
+        });
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+      if (!isMatch) {
+        return res.status(400).json({ message: 'Incorrect password' });
+      }
+    }
+
+    // Delete user account (CASCADE will delete related data)
+    await pool.execute('DELETE FROM users WHERE id = ?', [userIdBinary]);
+
+    res.json({ 
+      success: true, 
+      message: 'Account deleted successfully' 
+    });
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
