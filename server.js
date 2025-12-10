@@ -991,7 +991,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               two_factor_enabled,
               google_id,
               facebook_id,
-              created_at, updated_at
+              created_at, updated_at, name_changed_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
     );
@@ -1010,6 +1010,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       facebookId: u.facebook_id || null,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
+      nameChangedAt: u.name_changed_at || null,
     });
   } catch (e) {
     console.error('Get user error:', e);
@@ -1025,10 +1026,33 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
     const encryptionKey = getEncryptionKeyQuery();
     const fields = [];
     const values = [];
+    
+    // Check if name is being changed and enforce cooldown
     if (fullName) {
+      // Get current user data to check last name change
+      const [rows] = await pool.execute(
+        `SELECT name_changed_at FROM users WHERE id = ?`,
+        [uuidToBinary(id)]
+      );
+      
+      if (rows.length > 0 && rows[0].name_changed_at) {
+        const lastChange = new Date(rows[0].name_changed_at);
+        const daysSinceChange = Math.floor((Date.now() - lastChange.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysSinceChange < 7) {
+          const daysRemaining = 7 - daysSinceChange;
+          return res.status(400).json({ 
+            message: `You can change your name again in ${daysRemaining} day(s). Name changes are limited to once per week.`,
+            daysRemaining 
+          });
+        }
+      }
+      
       fields.push(`full_name = AES_ENCRYPT(?, ${encryptionKey})`);
+      fields.push('name_changed_at = NOW()');
       values.push(fullName);
     }
+    
     if (email) {
       fields.push(`email = AES_ENCRYPT(?, ${encryptionKey})`);
       values.push(email);
@@ -3544,10 +3568,95 @@ app.listen(PORT, HOST, () => {
 });
 
 // =============================
+// Biometric 2FA Endpoints
+// =============================
+
+// Enable biometric for 2FA
+app.post('/api/auth/biometric/2fa/enable', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Update user's biometric_2fa_enabled status
+    await pool.execute(
+      'UPDATE users SET biometric_2fa_enabled = TRUE WHERE id = ?',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: 'Biometric 2FA enabled successfully'
+    });
+  } catch (error) {
+    console.error('Error enabling biometric 2FA:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to enable biometric 2FA'
+    });
+  }
+});
+
+// Disable biometric for 2FA
+app.post('/api/auth/biometric/2fa/disable', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Update user's biometric_2fa_enabled status
+    await pool.execute(
+      'UPDATE users SET biometric_2fa_enabled = FALSE WHERE id = ?',
+      [userIdBinary]
+    );
+
+    res.json({
+      success: true,
+      message: 'Biometric 2FA disabled successfully'
+    });
+  } catch (error) {
+    console.error('Error disabling biometric 2FA:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to disable biometric 2FA'
+    });
+  }
+});
+
+// Get biometric 2FA status
+app.get('/api/auth/biometric/2fa/status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    const [rows] = await pool.execute(
+      'SELECT biometric_2fa_enabled FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      enabled: rows[0].biometric_2fa_enabled === 1
+    });
+  } catch (error) {
+    console.error('Error getting biometric 2FA status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get biometric 2FA status'
+    });
+  }
+});
+
+// =============================
 // Privacy Preferences Endpoint
 // =============================
 
-// Update privacy preferences (location sharing, analytics)
+// Update privacy preferences (analytics)
 app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) => {
   try {
     const { preferenceType, enabled } = req.body;
@@ -3560,10 +3669,10 @@ app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
     }
 
     // Validate preference type
-    const validTypes = ['location_sharing', 'analytics'];
+    const validTypes = ['analytics'];
     if (!validTypes.includes(preferenceType)) {
       return res.status(400).json({ 
-        message: 'Invalid preference type. Must be location_sharing or analytics' 
+        message: 'Invalid preference type. Must be analytics' 
       });
     }
 
@@ -3573,7 +3682,6 @@ app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS user_preferences (
         user_id BINARY(16) PRIMARY KEY,
-        location_sharing TINYINT(1) DEFAULT 0,
         analytics TINYINT(1) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -3605,20 +3713,18 @@ app.get('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
     const userIdBinary = uuidToBinary(userId);
 
     const [rows] = await pool.execute(
-      'SELECT location_sharing, analytics FROM user_preferences WHERE user_id = ?',
+      'SELECT analytics FROM user_preferences WHERE user_id = ?',
       [userIdBinary]
     );
 
     if (rows.length === 0) {
       // Return defaults if no preferences set
       return res.json({
-        locationSharing: false,
         analytics: true
       });
     }
 
     res.json({
-      locationSharing: rows[0].location_sharing === 1,
       analytics: rows[0].analytics === 1
     });
   } catch (error) {
