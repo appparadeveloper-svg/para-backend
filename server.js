@@ -3652,6 +3652,37 @@ app.get('/api/auth/biometric/2fa/status', authenticateToken, async (req, res) =>
   }
 });
 
+// Get biometric 2FA status for a specific user (during login flow, no auth required)
+app.get('/api/auth/biometric/2fa/status/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userIdBinary = uuidToBinary(userId);
+
+    const [rows] = await pool.execute(
+      'SELECT biometric_2fa_enabled FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      enabled: rows[0].biometric_2fa_enabled === 1
+    });
+  } catch (error) {
+    console.error('Error getting biometric 2FA status for user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get biometric 2FA status'
+    });
+  }
+});
+
 // =============================
 // Privacy Preferences Endpoint
 // =============================
