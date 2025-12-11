@@ -41,12 +41,33 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
+    console.log('❌ Auth Error: No token provided');
     return res.status(401).json({ message: 'Authentication required' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ message: 'Invalid or expired token' });
+      console.log('❌ Auth Error:', err.name, err.message);
+      console.log('   Token (first 20 chars):', token.substring(0, 20) + '...');
+      console.log('   JWT_SECRET (first 10 chars):', JWT_SECRET.substring(0, 10) + '...');
+      
+      // Provide more specific error messages
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token has expired. Please log in again.',
+          code: 'TOKEN_EXPIRED'
+        });
+      } else if (err.name === 'JsonWebTokenError') {
+        return res.status(403).json({ 
+          message: 'Invalid token. Please log in again.',
+          code: 'INVALID_TOKEN'
+        });
+      } else {
+        return res.status(403).json({ 
+          message: 'Authentication failed. Please log in again.',
+          code: 'AUTH_FAILED'
+        });
+      }
     }
     req.user = user;
     next();
