@@ -1605,7 +1605,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
     const { redirect } = req.query;
     
     if (redirect) {
-      // Return HTML page that redirects to mobile app
+      // Return HTML page that redirects to mobile app with success status
       res.send(`
         <!DOCTYPE html>
         <html>
@@ -1629,7 +1629,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
             <div class="icon">✅</div>
             <h1>Email Verified Successfully!</h1>
             <p>Your email has been verified. You can now return to the Para app.</p>
-            <a href="${redirect}" class="button">Open Para App</a>
+            <a href="${redirect}?status=success" class="button">Open Para App</a>
             <div class="countdown" id="countdown">Redirecting in 5 seconds...</div>
           </div>
           <script>
@@ -1642,7 +1642,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
               
               if (countdown <= 0) {
                 clearInterval(timer);
-                window.location.href = '${redirect}';
+                window.location.href = '${redirect}?status=success';
               }
             }, 1000);
             
@@ -1650,7 +1650,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
             document.querySelector('.button').addEventListener('click', (e) => {
               e.preventDefault();
               clearInterval(timer);
-              window.location.href = '${redirect}';
+              window.location.href = '${redirect}?status=success';
             });
           </script>
         </body>
