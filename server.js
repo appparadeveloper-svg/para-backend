@@ -817,13 +817,24 @@ app.post('/api/auth/facebook', async (req, res) => {
     );
 
     // Return success response
-    return res.status(isNewUser ? 201 : 200).json({
+    const response = {
       message: isNewUser 
         ? 'Account created successfully with Facebook' 
         : 'Logged in successfully with Facebook',
       token: token,
       user: formatUserResponse(user)
-    });
+    };
+
+    // If this was an account linking (not new user), include the social provider data
+    // so the frontend can show a profile sync dialog
+    if (!isNewUser && !user.two_factor_enabled) {
+      response.socialProviderData = {
+        fullName: fullName,
+        photoUrl: photoUrl
+      };
+    }
+
+    return res.status(isNewUser ? 201 : 200).json(response);
 
   } catch (error) {
     console.error('Facebook auth error:', error);
@@ -1003,13 +1014,24 @@ app.post('/api/auth/google', async (req, res) => {
     );
 
     // Return success response
-    return res.status(isNewUser ? 201 : 200).json({
+    const response = {
       message: isNewUser 
         ? 'Account created successfully with Google' 
         : 'Logged in successfully with Google',
       token: token,
       user: formatUserResponse(user)
-    });
+    };
+
+    // If this was an account linking (not new user), include the social provider data
+    // so the frontend can show a profile sync dialog
+    if (!isNewUser && !user.two_factor_enabled) {
+      response.socialProviderData = {
+        fullName: fullName,
+        photoUrl: photoUrl
+      };
+    }
+
+    return res.status(isNewUser ? 201 : 200).json(response);
 
   } catch (error) {
     console.error('Google auth error:', error);
