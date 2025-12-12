@@ -662,6 +662,21 @@ app.post('/api/auth/facebook', async (req, res) => {
     const encryptionKey = getEncryptionKeyQuery();
     const now = new Date();
 
+    // Check if this is a linking request from an already logged-in user
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let currentUserId = null;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        currentUserId = decoded.userId;
+      } catch (err) {
+        // Invalid token, treat as new login
+        currentUserId = null;
+      }
+    }
+
     // Check if user already exists with this facebookId
     const [existingUserByFacebookId] = await pool.execute(
       'SELECT id FROM users WHERE facebook_id = ?',
@@ -698,17 +713,24 @@ app.post('/api/auth/facebook', async (req, res) => {
       );
       user = userDetails[0];
     } else {
-      // Check if email is already registered (regular auth)
-      const [existingUserByEmail] = await pool.execute(
-        `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
-        [email]
-      );
+      // Check if this is a linking request from a logged-in user
+      if (currentUserId) {
+        // User is logged in and trying to link Facebook account
+        userIdBinary = uuidToBinary(currentUserId);
+        isNewUser = false;
 
-      if (existingUserByEmail.length > 0) {
-        // Email exists with regular auth - Link Facebook account
-        userIdBinary = existingUserByEmail[0].id;
-        isNewUser = false; // This is an existing user, not a new registration
-        
+        // Check if this Facebook ID is already linked to another account
+        const [facebookIdCheck] = await pool.execute(
+          'SELECT id FROM users WHERE facebook_id = ? AND id != ?',
+          [facebookId, userIdBinary]
+        );
+
+        if (facebookIdCheck.length > 0) {
+          return res.status(400).json({
+            message: 'This Facebook account is already linked to another user'
+          });
+        }
+
         // Check if syncProfile parameter is provided
         const syncProfile = req.body.syncProfile === true;
         
@@ -726,7 +748,7 @@ app.post('/api/auth/facebook', async (req, res) => {
           );
         }
 
-        // Get updated user details including 2FA status
+        // Get updated user details
         const [userDetails] = await pool.execute(
           `SELECT 
             id,
@@ -742,42 +764,87 @@ app.post('/api/auth/facebook', async (req, res) => {
         );
         user = userDetails[0];
       } else {
-        // New user - REGISTRATION
-        isNewUser = true;
-        
-        // Generate a random password (user won't use it, but DB might require it)
-        const randomPassword = await bcrypt.hash(
-          Math.random().toString(36).slice(-16),
-          12
+        // Not logged in - check if email is already registered (regular auth)
+        const [existingUserByEmail] = await pool.execute(
+          `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
+          [email]
         );
 
-        // Generate UUID for new user
-        const userId = generateUUID();
-        userIdBinary = uuidToBinary(userId);
+        if (existingUserByEmail.length > 0) {
+          // Email exists with regular auth - Link Facebook account
+          userIdBinary = existingUserByEmail[0].id;
+          isNewUser = false; // This is an existing user, not a new registration
+          
+          // Check if syncProfile parameter is provided
+          const syncProfile = req.body.syncProfile === true;
+          
+          if (syncProfile) {
+            // User chose to sync profile data from Facebook
+            await pool.execute(
+              'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+              [facebookId, fullName, photoUrl, now, userIdBinary]
+            );
+          } else {
+            // Only link the Facebook ID, preserve existing profile data
+            await pool.execute(
+              'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+              [facebookId, now, userIdBinary]
+            );
+          }
 
-        // Insert new user with Facebook credentials
-        await pool.execute(
-          `INSERT INTO users 
-           (id, full_name, email, password_hash, facebook_id, avatar_url, email_verified, created_at) 
-           VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), ?, ?, ?, TRUE, NOW())`,
-          [userIdBinary, fullName, email, randomPassword, facebookId, photoUrl]
-        );
+          // Get updated user details including 2FA status
+          const [userDetails] = await pool.execute(
+            `SELECT 
+              id,
+              CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+              CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+              avatar_url,
+              email_verified,
+              facebook_id,
+              two_factor_enabled
+             FROM users 
+             WHERE id = ?`,
+            [userIdBinary]
+          );
+          user = userDetails[0];
+        } else {
+          // New user - REGISTRATION
+          isNewUser = true;
+          
+          // Generate a random password (user won't use it, but DB might require it)
+          const randomPassword = await bcrypt.hash(
+            Math.random().toString(36).slice(-16),
+            12
+          );
 
-        // Get the newly created user including 2FA status
-        const [newUserDetails] = await pool.execute(
-          `SELECT 
-            id,
-            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
-            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
-            avatar_url,
-            email_verified,
-            facebook_id,
-            two_factor_enabled
-           FROM users 
-           WHERE id = ?`,
-          [userIdBinary]
-        );
-        user = newUserDetails[0];
+          // Generate UUID for new user
+          const userId = generateUUID();
+          userIdBinary = uuidToBinary(userId);
+
+          // Insert new user with Facebook credentials
+          await pool.execute(
+            `INSERT INTO users 
+             (id, full_name, email, password_hash, facebook_id, avatar_url, email_verified, created_at) 
+             VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), ?, ?, ?, TRUE, NOW())`,
+            [userIdBinary, fullName, email, randomPassword, facebookId, photoUrl]
+          );
+
+          // Get the newly created user including 2FA status
+          const [newUserDetails] = await pool.execute(
+            `SELECT 
+              id,
+              CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+              CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+              avatar_url,
+              email_verified,
+              facebook_id,
+              two_factor_enabled
+             FROM users 
+             WHERE id = ?`,
+            [userIdBinary]
+          );
+          user = newUserDetails[0];
+        }
       }
     }
 
@@ -807,7 +874,7 @@ app.post('/api/auth/facebook', async (req, res) => {
     console.log('⚠️ 2FA not required - proceeding with token generation');
 
     // Generate JWT token (only if 2FA is not enabled or new user)
-    const token = jwt.sign(
+    const jwtToken = jwt.sign(
       {
         userId: userUuid,
         email: user.email,
@@ -821,7 +888,7 @@ app.post('/api/auth/facebook', async (req, res) => {
       message: isNewUser 
         ? 'Account created successfully with Facebook' 
         : 'Logged in successfully with Facebook',
-      token: token,
+      token: jwtToken,
       user: formatUserResponse(user)
     };
 
@@ -859,6 +926,21 @@ app.post('/api/auth/google', async (req, res) => {
     const encryptionKey = getEncryptionKeyQuery();
     const now = new Date();
 
+    // Check if this is a linking request from an already logged-in user
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let currentUserId = null;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        currentUserId = decoded.userId;
+      } catch (err) {
+        // Invalid token, treat as new login
+        currentUserId = null;
+      }
+    }
+
     // Check if user already exists with this googleId
     const [existingUserByGoogleId] = await pool.execute(
       'SELECT id FROM users WHERE google_id = ?',
@@ -895,17 +977,24 @@ app.post('/api/auth/google', async (req, res) => {
       );
       user = userDetails[0];
     } else {
-      // Check if email is already registered (regular auth)
-      const [existingUserByEmail] = await pool.execute(
-        `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
-        [email]
-      );
+      // Check if this is a linking request from a logged-in user
+      if (currentUserId) {
+        // User is logged in and trying to link Google account
+        userIdBinary = uuidToBinary(currentUserId);
+        isNewUser = false;
 
-      if (existingUserByEmail.length > 0) {
-        // Email exists with regular auth - Link Google account
-        userIdBinary = existingUserByEmail[0].id;
-        isNewUser = false; // This is an existing user, not a new registration
-        
+        // Check if this Google ID is already linked to another account
+        const [googleIdCheck] = await pool.execute(
+          'SELECT id FROM users WHERE google_id = ? AND id != ?',
+          [googleId, userIdBinary]
+        );
+
+        if (googleIdCheck.length > 0) {
+          return res.status(400).json({
+            message: 'This Google account is already linked to another user'
+          });
+        }
+
         // Check if syncProfile parameter is provided
         const syncProfile = req.body.syncProfile === true;
         
@@ -923,7 +1012,7 @@ app.post('/api/auth/google', async (req, res) => {
           );
         }
 
-        // Get updated user details including 2FA status
+        // Get updated user details
         const [userDetails] = await pool.execute(
           `SELECT 
             id,
@@ -939,42 +1028,87 @@ app.post('/api/auth/google', async (req, res) => {
         );
         user = userDetails[0];
       } else {
-        // New user - REGISTRATION
-        isNewUser = true;
-        
-        // Generate a random password (user won't use it, but DB might require it)
-        const randomPassword = await bcrypt.hash(
-          Math.random().toString(36).slice(-16),
-          12
+        // Not logged in - check if email is already registered (regular auth)
+        const [existingUserByEmail] = await pool.execute(
+          `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
+          [email]
         );
 
-        // Generate UUID for new user
-        const userId = generateUUID();
-        userIdBinary = uuidToBinary(userId);
+        if (existingUserByEmail.length > 0) {
+          // Email exists with regular auth - Link Google account
+          userIdBinary = existingUserByEmail[0].id;
+          isNewUser = false; // This is an existing user, not a new registration
+          
+          // Check if syncProfile parameter is provided
+          const syncProfile = req.body.syncProfile === true;
+          
+          if (syncProfile) {
+            // User chose to sync profile data from Google
+            await pool.execute(
+              'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+              [googleId, fullName, photoUrl, now, userIdBinary]
+            );
+          } else {
+            // Only link the Google ID, preserve existing profile data
+            await pool.execute(
+              'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+              [googleId, now, userIdBinary]
+            );
+          }
 
-        // Insert new user with Google credentials
-        await pool.execute(
-          `INSERT INTO users 
-           (id, full_name, email, password_hash, google_id, avatar_url, email_verified, created_at) 
-           VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), ?, ?, ?, TRUE, NOW())`,
-          [userIdBinary, fullName, email, randomPassword, googleId, photoUrl]
-        );
+          // Get updated user details including 2FA status
+          const [userDetails] = await pool.execute(
+            `SELECT 
+              id,
+              CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+              CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+              avatar_url,
+              email_verified,
+              google_id,
+              two_factor_enabled
+             FROM users 
+             WHERE id = ?`,
+            [userIdBinary]
+          );
+          user = userDetails[0];
+        } else {
+          // New user - REGISTRATION
+          isNewUser = true;
+          
+          // Generate a random password (user won't use it, but DB might require it)
+          const randomPassword = await bcrypt.hash(
+            Math.random().toString(36).slice(-16),
+            12
+          );
 
-        // Get the newly created user including 2FA status
-        const [newUserDetails] = await pool.execute(
-          `SELECT 
-            id,
-            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
-            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
-            avatar_url,
-            email_verified,
-            google_id,
-            two_factor_enabled
-           FROM users 
-           WHERE id = ?`,
-          [userIdBinary]
-        );
-        user = newUserDetails[0];
+          // Generate UUID for new user
+          const userId = generateUUID();
+          userIdBinary = uuidToBinary(userId);
+
+          // Insert new user with Google credentials
+          await pool.execute(
+            `INSERT INTO users 
+             (id, full_name, email, password_hash, google_id, avatar_url, email_verified, created_at) 
+             VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), ?, ?, ?, TRUE, NOW())`,
+            [userIdBinary, fullName, email, randomPassword, googleId, photoUrl]
+          );
+
+          // Get the newly created user including 2FA status
+          const [newUserDetails] = await pool.execute(
+            `SELECT 
+              id,
+              CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+              CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+              avatar_url,
+              email_verified,
+              google_id,
+              two_factor_enabled
+             FROM users 
+             WHERE id = ?`,
+            [userIdBinary]
+          );
+          user = newUserDetails[0];
+        }
       }
     }
 
@@ -1004,7 +1138,7 @@ app.post('/api/auth/google', async (req, res) => {
     console.log('⚠️ 2FA not required - proceeding with token generation');
 
     // Generate JWT token (only if 2FA is not enabled or new user)
-    const token = jwt.sign(
+    const jwtToken = jwt.sign(
       {
         userId: userUuid,
         email: user.email,
@@ -1018,7 +1152,7 @@ app.post('/api/auth/google', async (req, res) => {
       message: isNewUser 
         ? 'Account created successfully with Google' 
         : 'Logged in successfully with Google',
-      token: token,
+      token: jwtToken,
       user: formatUserResponse(user)
     };
 
@@ -1134,6 +1268,67 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('Update user error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update profile (name and avatar) - for social profile sync
+app.put('/api/users/profile', authenticateToken, async (req, res) => {
+  try {
+    const { fullName, avatarUrl } = req.body;
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    const updates = [];
+    const values = [];
+
+    if (fullName !== undefined) {
+      updates.push(`full_name = AES_ENCRYPT(?, ${encryptionKey})`);
+      values.push(fullName);
+    }
+
+    if (avatarUrl !== undefined) {
+      updates.push('avatar_url = ?');
+      values.push(avatarUrl);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: 'No updates provided' });
+    }
+
+    values.push(userIdBinary);
+
+    await pool.execute(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    // Get updated user data
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        avatar_url,
+        email_verified,
+        google_id,
+        facebook_id
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      message: 'Profile updated successfully',
+      user: formatUserResponse(users[0])
+    });
+  } catch (e) {
+    console.error('Update profile error:', e);
     res.status(500).json({ message: 'Server error' });
   }
 });
