@@ -18,8 +18,8 @@ app.use(cors()); // Enable CORS for local development
 
 // Health check endpoint for monitoring services (e.g., UptimeRobot)
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok', 
+  res.status(200).json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development'
@@ -28,7 +28,7 @@ app.get('/health', (req, res) => {
 
 // Root endpoint
 app.get('/', (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     message: 'Para Backend API',
     version: '1.0.0',
     status: 'running'
@@ -50,20 +50,20 @@ const authenticateToken = (req, res, next) => {
       console.log('❌ Auth Error:', err.name, err.message);
       console.log('   Token (first 20 chars):', token.substring(0, 20) + '...');
       console.log('   JWT_SECRET (first 10 chars):', JWT_SECRET.substring(0, 10) + '...');
-      
+
       // Provide more specific error messages
       if (err.name === 'TokenExpiredError') {
-        return res.status(401).json({ 
+        return res.status(401).json({
           message: 'Token has expired. Please log in again.',
           code: 'TOKEN_EXPIRED'
         });
       } else if (err.name === 'JsonWebTokenError') {
-        return res.status(403).json({ 
+        return res.status(403).json({
           message: 'Invalid token. Please log in again.',
           code: 'INVALID_TOKEN'
         });
       } else {
-        return res.status(403).json({ 
+        return res.status(403).json({
           message: 'Authentication failed. Please log in again.',
           code: 'AUTH_FAILED'
         });
@@ -113,8 +113,8 @@ function getEncryptionKeyQuery() {
 
 // Helper function to generate UUID v4
 function generateUUID() {
-  return crypto.randomUUID ? crypto.randomUUID() : 
-    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return crypto.randomUUID ? crypto.randomUUID() :
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       const r = Math.random() * 16 | 0;
       const v = c === 'x' ? r : (r & 0x3 | 0x8);
       return v.toString(16);
@@ -124,7 +124,7 @@ function generateUUID() {
 // Helper function to convert UUID string to binary buffer for MySQL
 function uuidToBinary(uuid) {
   if (Buffer.isBuffer(uuid)) return uuid;
-  
+
   // Remove dashes and convert hex string to binary
   const hex = uuid.replace(/-/g, '');
   return Buffer.from(hex, 'hex');
@@ -134,7 +134,7 @@ function uuidToBinary(uuid) {
 function binaryToUuid(binUuid) {
   if (!binUuid) return null;
   if (typeof binUuid === 'string') return binUuid; // Already a string
-  
+
   // If it's a buffer, convert to hex string with dashes
   let hex;
   if (Buffer.isBuffer(binUuid)) {
@@ -143,9 +143,9 @@ function binaryToUuid(binUuid) {
     // Might be a mysql2 binary type
     hex = binUuid.hex || binUuid.toString('hex');
   }
-  
+
   if (hex.length === 32) {
-    return `${hex.substring(0,8)}-${hex.substring(8,12)}-${hex.substring(12,16)}-${hex.substring(16,20)}-${hex.substring(20,32)}`;
+    return `${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}`;
   }
   return hex;
 }
@@ -154,7 +154,7 @@ function binaryToUuid(binUuid) {
 function formatUserResponse(user) {
   const userUuid = binaryToUuid(user.id);
   const isSocialLogin = !!(user.google_id || user.facebook_id);
-  
+
   return {
     id: userUuid,
     fullName: user.full_name,
@@ -257,12 +257,12 @@ async function sendVerificationEmail(email, fullName, verificationToken) {
   // Use deep link for mobile app: paraapp://verify-email?token=xxx
   // Falls back to web URL if FRONTEND_URL is set
   const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email'}?token=${verificationToken}`;
-  
+
   // Try SendGrid API first if configured, fallback to SMTP
   if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
     return await sendVerificationEmailViaSendGridAPI(email, fullName, verificationToken);
   }
-  
+
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
     to: email,
@@ -328,9 +328,9 @@ async function sendVerificationEmail(email, fullName, verificationToken) {
 async function sendVerificationEmailViaSendGridAPI(email, fullName, verificationToken) {
   const sgMail = require('@sendgrid/mail');
   sgMail.setApiKey(process.env.EMAIL_PASSWORD);
-  
+
   const verificationUrl = `https://para-backend-eukj.onrender.com/api/auth/verify-email/${verificationToken}?redirect=paraapp://verify-email`;
-  
+
   const msg = {
     to: email,
     from: {
@@ -484,7 +484,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const encryptionKey = getEncryptionKeyQuery();
-    
+
     // Get user with decrypted email and name
     const [users] = await pool.execute(
       `SELECT 
@@ -521,7 +521,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.is_locked) {
       if (user.locked_until && new Date(user.locked_until) > now) {
         const minutesLeft = Math.ceil((new Date(user.locked_until) - now) / 60000);
-        return res.status(423).json({ 
+        return res.status(423).json({
           message: `Account is locked. Try again in ${minutesLeft} minute(s).`,
           lockedUntil: user.locked_until
         });
@@ -536,15 +536,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     // Verify password
     const isMatch = await bcrypt.compare(password, user.password_hash);
-    
+
     if (!isMatch) {
       // Check if user is trying to use their old password
       let isOldPassword = false;
       let passwordChangedMessage = '';
-      
+
       if (user.old_password_hash && user.password_changed_at) {
         isOldPassword = await bcrypt.compare(password, user.old_password_hash);
-        
+
         if (isOldPassword) {
           // Calculate time since password change
           const changedAt = new Date(user.password_changed_at);
@@ -552,7 +552,7 @@ app.post('/api/auth/login', async (req, res) => {
           const daysAgo = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
           const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
           const minutesAgo = Math.floor(timeDiff / (1000 * 60));
-          
+
           let timeAgoText;
           if (daysAgo > 0) {
             timeAgoText = daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
@@ -563,15 +563,15 @@ app.post('/api/auth/login', async (req, res) => {
           } else {
             timeAgoText = 'just now';
           }
-          
+
           passwordChangedMessage = `Your password was changed ${timeAgoText}. Please use your new password.`;
         }
       }
-      
+
       // Increment failed login attempts
       const newAttempts = (user.failed_login_attempts || 0) + 1;
       const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
-      const lockUntil = shouldLock 
+      const lockUntil = shouldLock
         ? new Date(now.getTime() + LOCKOUT_DURATION_MINUTES * 60000)
         : null;
 
@@ -586,7 +586,7 @@ app.post('/api/auth/login', async (req, res) => {
       );
 
       if (shouldLock) {
-        return res.status(423).json({ 
+        return res.status(423).json({
           message: `Account has been locked due to ${MAX_FAILED_ATTEMPTS} failed login attempts. Try again in ${LOCKOUT_DURATION_MINUTES} minutes.`,
           lockedUntil: lockUntil,
           isOldPassword: isOldPassword,
@@ -595,15 +595,15 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const remainingAttempts = MAX_FAILED_ATTEMPTS - newAttempts;
-      
+
       // Build the error message
       let errorMessage = 'Invalid credentials.';
       if (isOldPassword && passwordChangedMessage) {
         errorMessage = passwordChangedMessage;
       }
       errorMessage += ` ${newAttempts} failed attempt${newAttempts > 1 ? 's' : ''}. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining before account lock.`;
-      
-      return res.status(400).json({ 
+
+      return res.status(400).json({
         message: errorMessage,
         isOldPassword: isOldPassword,
         passwordChangedMessage: passwordChangedMessage,
@@ -690,7 +690,7 @@ app.post('/api/auth/facebook', async (req, res) => {
     if (existingUserByFacebookId.length > 0) {
       // User exists with Facebook ID - LOGIN
       userIdBinary = existingUserByFacebookId[0].id;
-      
+
       // Update last login timestamp
       await pool.execute(
         'UPDATE users SET last_login_attempt = ? WHERE id = ?',
@@ -719,6 +719,31 @@ app.post('/api/auth/facebook', async (req, res) => {
         userIdBinary = uuidToBinary(currentUserId);
         isNewUser = false;
 
+        // Get current user's email to verify it matches the Facebook account email
+        const [currentUserData] = await pool.execute(
+          `SELECT CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email FROM users WHERE id = ?`,
+          [userIdBinary]
+        );
+
+        if (currentUserData.length === 0) {
+          return res.status(404).json({
+            message: 'Current user not found'
+          });
+        }
+
+        const currentUserEmail = currentUserData[0].email;
+
+        // Verify that the Facebook account email matches the current user's email
+        if (currentUserEmail !== email) {
+          return res.status(400).json({
+            message: 'Email mismatch: Your Facebook account email does not match your current account email',
+            emailMismatch: true,
+            currentEmail: currentUserEmail,
+            facebookEmail: email,
+            detailedMessage: `Cannot link Facebook account. Your current email (${currentUserEmail}) must match your Facebook account email (${email}). Please update your account email to match your Facebook account, or use a Facebook account with the email ${currentUserEmail}.`
+          });
+        }
+
         // Check if this Facebook ID is already linked to another account
         const [facebookIdCheck] = await pool.execute(
           'SELECT id FROM users WHERE facebook_id = ? AND id != ?',
@@ -733,7 +758,7 @@ app.post('/api/auth/facebook', async (req, res) => {
 
         // Check if syncProfile parameter is provided
         const syncProfile = req.body.syncProfile === true;
-        
+
         if (syncProfile) {
           // User chose to sync profile data from Facebook
           await pool.execute(
@@ -774,10 +799,10 @@ app.post('/api/auth/facebook', async (req, res) => {
           // Email exists with regular auth - Link Facebook account
           userIdBinary = existingUserByEmail[0].id;
           isNewUser = false; // This is an existing user, not a new registration
-          
+
           // Check if syncProfile parameter is provided
           const syncProfile = req.body.syncProfile === true;
-          
+
           if (syncProfile) {
             // User chose to sync profile data from Facebook
             await pool.execute(
@@ -810,7 +835,7 @@ app.post('/api/auth/facebook', async (req, res) => {
         } else {
           // New user - REGISTRATION
           isNewUser = true;
-          
+
           // Generate a random password (user won't use it, but DB might require it)
           const randomPassword = await bcrypt.hash(
             Math.random().toString(36).slice(-16),
@@ -885,8 +910,8 @@ app.post('/api/auth/facebook', async (req, res) => {
 
     // Return success response
     const response = {
-      message: isNewUser 
-        ? 'Account created successfully with Facebook' 
+      message: isNewUser
+        ? 'Account created successfully with Facebook'
         : 'Logged in successfully with Facebook',
       token: jwtToken,
       user: formatUserResponse(user)
@@ -954,7 +979,7 @@ app.post('/api/auth/google', async (req, res) => {
     if (existingUserByGoogleId.length > 0) {
       // User exists with Google ID - LOGIN
       userIdBinary = existingUserByGoogleId[0].id;
-      
+
       // Update last login timestamp
       await pool.execute(
         'UPDATE users SET last_login_attempt = ? WHERE id = ?',
@@ -983,6 +1008,36 @@ app.post('/api/auth/google', async (req, res) => {
         userIdBinary = uuidToBinary(currentUserId);
         isNewUser = false;
 
+        // Get current user's email to verify it matches the Google account email
+        const [currentUserData] = await pool.execute(
+          `SELECT 
+            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+            avatar_url
+          FROM users WHERE id = ?`,
+          [userIdBinary]
+        );
+
+        if (currentUserData.length === 0) {
+          return res.status(404).json({
+            message: 'Current user not found'
+          });
+        }
+
+        const currentUser = currentUserData[0];
+        const currentUserEmail = currentUser.email;
+
+        // Verify that the Google account email matches the current user's email
+        if (currentUserEmail !== email) {
+          return res.status(400).json({
+            message: 'Email mismatch: Your Google account email does not match your current account email',
+            emailMismatch: true,
+            currentEmail: currentUserEmail,
+            googleEmail: email,
+            detailedMessage: `Cannot link Google account. Your current email (${currentUserEmail}) must match your Google account email (${email}). Please update your account email to match your Google account, or use a Google account with the email ${currentUserEmail}.`
+          });
+        }
+
         // Check if this Google ID is already linked to another account
         const [googleIdCheck] = await pool.execute(
           'SELECT id FROM users WHERE google_id = ? AND id != ?',
@@ -995,9 +1050,54 @@ app.post('/api/auth/google', async (req, res) => {
           });
         }
 
-        // Check if syncProfile parameter is provided
+        // Check if this is just a data fetch (no actual linking yet)
+        const confirmLink = req.body.confirmLink === true;
+
+        if (!confirmLink) {
+          // Just return social data for the user to review, DON'T link yet
+          console.log('📋 Fetching Google data for review (not linking yet)');
+
+          // Get current user details without linking
+          const [userDetails] = await pool.execute(
+            `SELECT 
+              id,
+              CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+              CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+              avatar_url,
+              email_verified,
+              google_id,
+              two_factor_enabled
+             FROM users 
+             WHERE id = ?`,
+            [userIdBinary]
+          );
+          user = userDetails[0];
+
+          // Return socialProviderData so frontend shows the sync dialog
+          const userUuid = binaryToUuid(user.id);
+          const token = jwt.sign(
+            { userId: userUuid, email: user.email },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+          );
+
+          return res.status(200).json({
+            message: 'Google account verified (not linked yet)',
+            token: token,
+            user: formatUserResponse(user),
+            socialProviderData: {
+              fullName: fullName,
+              photoUrl: photoUrl,
+              googleId: googleId  // Include googleId for the actual linking step
+            },
+            needsConfirmation: true  // Flag to indicate user needs to confirm
+          });
+        }
+
+        // User has confirmed - proceed with actual linking
+        console.log('✅ User confirmed - proceeding with Google account linking');
         const syncProfile = req.body.syncProfile === true;
-        
+
         if (syncProfile) {
           // User chose to sync profile data from Google
           await pool.execute(
@@ -1038,10 +1138,10 @@ app.post('/api/auth/google', async (req, res) => {
           // Email exists with regular auth - Link Google account
           userIdBinary = existingUserByEmail[0].id;
           isNewUser = false; // This is an existing user, not a new registration
-          
+
           // Check if syncProfile parameter is provided
           const syncProfile = req.body.syncProfile === true;
-          
+
           if (syncProfile) {
             // User chose to sync profile data from Google
             await pool.execute(
@@ -1074,7 +1174,7 @@ app.post('/api/auth/google', async (req, res) => {
         } else {
           // New user - REGISTRATION
           isNewUser = true;
-          
+
           // Generate a random password (user won't use it, but DB might require it)
           const randomPassword = await bcrypt.hash(
             Math.random().toString(36).slice(-16),
@@ -1149,8 +1249,8 @@ app.post('/api/auth/google', async (req, res) => {
 
     // Return success response
     const response = {
-      message: isNewUser 
-        ? 'Account created successfully with Google' 
+      message: isNewUser
+        ? 'Account created successfully with Google'
         : 'Logged in successfully with Google',
       token: jwtToken,
       user: formatUserResponse(user)
@@ -1171,6 +1271,94 @@ app.post('/api/auth/google', async (req, res) => {
     console.error('Google auth error:', error);
     return res.status(500).json({
       message: 'Internal server error during Google authentication'
+    });
+  }
+});
+
+// Confirm Google account linking (after user makes choice in dialog)
+app.post('/api/auth/google/confirm-link', authenticateToken, async (req, res) => {
+  try {
+    const { googleId, syncProfile, fullName, photoUrl } = req.body;
+    const userId = req.user.userId;
+
+    if (!googleId) {
+      return res.status(400).json({
+        message: 'Google ID is required'
+      });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+    const userIdBinary = uuidToBinary(userId);
+    const now = new Date();
+
+    console.log('🔗 Confirming Google link for user:', userId, 'syncProfile:', syncProfile);
+
+    // Verify user exists
+    const [userCheck] = await pool.execute(
+      'SELECT id FROM users WHERE id = ?',
+      [userIdBinary]
+    );
+
+    if (userCheck.length === 0) {
+      return res.status(404).json({
+        message: 'User not found'
+      });
+    }
+
+    // Check if this Google ID is already linked to another account
+    const [googleIdCheck] = await pool.execute(
+      'SELECT id FROM users WHERE google_id = ? AND id != ?',
+      [googleId, userIdBinary]
+    );
+
+    if (googleIdCheck.length > 0) {
+      return res.status(400).json({
+        message: 'This Google account is already linked to another user'
+      });
+    }
+
+    // Perform the linking
+    if (syncProfile) {
+      await pool.execute(
+        'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+        [googleId, fullName, photoUrl, now, userIdBinary]
+      );
+      console.log('✅ Google linked with profile sync');
+    } else {
+      // Only link Google ID, preserve existing profile data
+      await pool.execute(
+        'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+        [googleId, now, userIdBinary]
+      );
+      console.log('✅ Google linked without profile sync');
+    }
+
+    // Get updated user details
+    const [userDetails] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        avatar_url,
+        email_verified,
+        google_id,
+        two_factor_enabled
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    const user = userDetails[0];
+
+    return res.status(200).json({
+      message: 'Google account linked successfully',
+      user: formatUserResponse(user)
+    });
+
+  } catch (error) {
+    console.error('❌ Google link confirmation error:', error);
+    return res.status(500).json({
+      message: 'Internal server error during Google account linking'
     });
   }
 });
@@ -1227,7 +1415,7 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
     const encryptionKey = getEncryptionKeyQuery();
     const fields = [];
     const values = [];
-    
+
     // Check if name is being changed and enforce cooldown
     if (fullName) {
       // Get current user data to check last name change
@@ -1235,25 +1423,25 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
         `SELECT name_changed_at FROM users WHERE id = ?`,
         [uuidToBinary(id)]
       );
-      
+
       if (rows.length > 0 && rows[0].name_changed_at) {
         const lastChange = new Date(rows[0].name_changed_at);
         const daysSinceChange = Math.floor((Date.now() - lastChange.getTime()) / (1000 * 60 * 60 * 24));
-        
+
         if (daysSinceChange < 7) {
           const daysRemaining = 7 - daysSinceChange;
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: `You can change your name again in ${daysRemaining} day(s). Name changes are limited to once per week.`,
-            daysRemaining 
+            daysRemaining
           });
         }
       }
-      
+
       fields.push(`full_name = AES_ENCRYPT(?, ${encryptionKey})`);
       fields.push('name_changed_at = NOW()');
       values.push(fullName);
     }
-    
+
     if (email) {
       fields.push(`email = AES_ENCRYPT(?, ${encryptionKey})`);
       values.push(email);
@@ -1450,7 +1638,7 @@ app.get('/api/chats/:userId/messages', optionalAuthenticateToken, async (req, re
   try {
     const userIdParam = req.params.userId;
     console.log(`[GET /api/chats/:userId/messages] Request received for userId: ${userIdParam}`);
-    
+
     // Validate UUID format (basic check)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -1512,7 +1700,7 @@ app.post('/api/chats/:userId/messages', optionalAuthenticateToken, async (req, r
     const userIdParam = req.params.userId;
     console.log(`[POST /api/chats/:userId/messages] Request received for userId: ${userIdParam}`);
     console.log(`[POST] Request body:`, JSON.stringify(req.body));
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -1543,9 +1731,9 @@ app.post('/api/chats/:userId/messages', optionalAuthenticateToken, async (req, r
 
     const { text, isBot, timestamp, error } = req.body;
     const messageTimestamp = timestamp ? new Date(timestamp) : new Date();
-    
+
     console.log(`[POST] Inserting message for user ${userIdParam}: text="${text?.substring(0, 50)}...", isBot=${isBot}`);
-    
+
     const [result] = await pool.execute(
       'INSERT INTO messages (user_id, text, is_bot, timestamp, error) VALUES (?, ?, ?, ?, ?)',
       [userIdBinary, text, isBot ? 1 : 0, messageTimestamp, error || null]
@@ -1571,7 +1759,7 @@ app.post('/api/chats/:userId/messages', optionalAuthenticateToken, async (req, r
 app.delete('/api/chats/:userId/messages', optionalAuthenticateToken, async (req, res) => {
   try {
     const userIdParam = req.params.userId;
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -1637,7 +1825,7 @@ app.post('/api/chats/messages', authenticateToken, async (req, res) => {
     const { text, isBot, timestamp, error } = req.body;
     const messageTimestamp = timestamp ? new Date(timestamp) : new Date();
     const userIdBinary = uuidToBinary(req.user.userId);
-    
+
     const [result] = await pool.execute(
       'INSERT INTO messages (user_id, text, is_bot, timestamp, error) VALUES (?, ?, ?, ?, ?)',
       [userIdBinary, text, isBot ? 1 : 0, messageTimestamp, error || null]
@@ -1677,7 +1865,7 @@ app.delete('/api/chats/messages', authenticateToken, async (req, res) => {
 app.post('/api/users/:id/send-verification', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Ensure user can only request verification for their own account
     if (req.user.userId !== id) {
       return res.status(403).json({ message: 'Forbidden' });
@@ -1722,13 +1910,13 @@ app.post('/api/users/:id/send-verification', authenticateToken, async (req, res)
     const emailSent = await sendVerificationEmail(user.email, user.full_name, verificationToken);
 
     if (emailSent) {
-      res.json({ 
-        success: true, 
-        message: 'Verification email sent successfully' 
+      res.json({
+        success: true,
+        message: 'Verification email sent successfully'
       });
     } else {
-      res.status(500).json({ 
-        message: 'Failed to send verification email. Please try again later.' 
+      res.status(500).json({
+        message: 'Failed to send verification email. Please try again later.'
       });
     }
   } catch (error) {
@@ -1822,7 +2010,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
     // Check if token expired
     const now = new Date();
     const expiryDate = new Date(user.verification_token_expires);
-    
+
     if (now > expiryDate) {
       const { redirect } = req.query;
       if (redirect) {
@@ -1865,7 +2053,7 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
 
     // Check if redirect parameter exists (for mobile app deep link)
     const { redirect } = req.query;
-    
+
     if (redirect) {
       // Return HTML page that redirects to mobile app with success status
       res.send(`
@@ -1920,9 +2108,9 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
       `);
     } else {
       // Return JSON for API calls
-      res.json({ 
-        success: true, 
-        message: 'Email verified successfully!' 
+      res.json({
+        success: true,
+        message: 'Email verified successfully!'
       });
     }
   } catch (error) {
@@ -1940,12 +2128,12 @@ async function sendPasswordResetEmail(email, fullName, resetToken) {
   // Use deep link for mobile app: paraapp://reset-password?token=xxx
   // Falls back to web URL if FRONTEND_URL is set
   const resetUrl = `${process.env.FRONTEND_URL || 'paraapp://reset-password'}?token=${resetToken}`;
-  
+
   // Try SendGrid API first if configured, fallback to SMTP
   if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
     return await sendPasswordResetEmailViaSendGridAPI(email, fullName, resetToken);
   }
-  
+
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
     to: email,
@@ -2014,9 +2202,9 @@ async function sendPasswordResetEmail(email, fullName, resetToken) {
 async function sendPasswordResetEmailViaSendGridAPI(email, fullName, resetToken) {
   const sgMail = require('@sendgrid/mail');
   sgMail.setApiKey(process.env.EMAIL_PASSWORD);
-  
+
   const resetUrl = `https://para-backend-eukj.onrender.com/api/auth/reset-password/${resetToken}?redirect=paraapp://reset-password`;
-  
+
   const msg = {
     to: email,
     from: {
@@ -2108,9 +2296,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     // Always return success message for security (don't reveal if email exists)
     if (users.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: 'If an account exists for this email, you will receive reset instructions.' 
+      return res.json({
+        success: true,
+        message: 'If an account exists for this email, you will receive reset instructions.'
       });
     }
 
@@ -2130,13 +2318,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const emailSent = await sendPasswordResetEmail(user.email, user.full_name, resetToken);
 
     if (emailSent) {
-      res.json({ 
-        success: true, 
-        message: 'If an account exists for this email, you will receive reset instructions.' 
+      res.json({
+        success: true,
+        message: 'If an account exists for this email, you will receive reset instructions.'
       });
     } else {
-      res.status(500).json({ 
-        message: 'Failed to send password reset email. Please try again later.' 
+      res.status(500).json({
+        message: 'Failed to send password reset email. Please try again later.'
       });
     }
   } catch (error) {
@@ -2157,9 +2345,9 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid or expired reset token' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset token'
       });
     }
 
@@ -2168,17 +2356,17 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
     // Check if token expired
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expires);
-    
+
     if (now > expiryDate) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Reset token has expired. Please request a new one.' 
+      return res.status(400).json({
+        success: false,
+        message: 'Reset token has expired. Please request a new one.'
       });
     }
 
-    res.json({ 
-      success: true, 
-      message: 'Token is valid' 
+    res.json({
+      success: true,
+      message: 'Token is valid'
     });
   } catch (error) {
     console.error('Error verifying reset token:', error);
@@ -2282,10 +2470,10 @@ app.post('/api/auth/reset-password', async (req, res) => {
     // Check if token expired
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expires);
-    
+
     if (now > expiryDate) {
-      return res.status(400).json({ 
-        message: 'Reset token has expired. Please request a new one.' 
+      return res.status(400).json({
+        message: 'Reset token has expired. Please request a new one.'
       });
     }
 
@@ -2298,9 +2486,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
       [hashedPassword, user.id]
     );
 
-    res.json({ 
-      success: true, 
-      message: 'Password reset successfully!' 
+    res.json({
+      success: true,
+      message: 'Password reset successfully!'
     });
   } catch (error) {
     console.error('Error resetting password:', error);
@@ -2315,34 +2503,34 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 
     // Validate input
     if (!userId || !currentPassword || !newPassword) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID, current password, and new password are required' 
+        message: 'User ID, current password, and new password are required'
       });
     }
 
     // Validate new password strength (minimum 8 characters)
     if (newPassword.length < 8) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'New password must be at least 8 characters long' 
+        message: 'New password must be at least 8 characters long'
       });
     }
 
     // Validate new password complexity
     const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).+$/;
     if (!passwordRegex.test(newPassword)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Password must include uppercase, number, and special character' 
+        message: 'Password must include uppercase, number, and special character'
       });
     }
 
     // Check if new password is same as current
     if (currentPassword === newPassword) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'New password must be different from current password' 
+        message: 'New password must be different from current password'
       });
     }
 
@@ -2356,9 +2544,9 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -2366,11 +2554,11 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 
     // Verify current password
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
-    
+
     if (!isMatch) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Current password is incorrect' 
+        message: 'Current password is incorrect'
       });
     }
 
@@ -2383,15 +2571,15 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
       [hashedPassword, user.password_hash, userIdBinary]
     );
 
-    res.json({ 
-      success: true, 
-      message: 'Password changed successfully!' 
+    res.json({
+      success: true,
+      message: 'Password changed successfully!'
     });
   } catch (error) {
     console.error('Error changing password:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2403,10 +2591,10 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
     const { password } = req.body;
 
     if (!password) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         valid: false,
-        message: 'Password is required' 
+        message: 'Password is required'
       });
     }
 
@@ -2419,10 +2607,10 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
         valid: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -2430,26 +2618,26 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
 
     // Check if user has a password (social login users don't)
     if (!user.password_hash) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         valid: false,
-        message: 'Password verification not available for social login accounts' 
+        message: 'Password verification not available for social login accounts'
       });
     }
 
     // Verify password
     const isValid = await bcrypt.compare(password, user.password_hash);
 
-    res.json({ 
+    res.json({
       success: true,
       valid: isValid
     });
   } catch (error) {
     console.error('Error verifying password:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       valid: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2464,9 +2652,9 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     const { userId, password } = req.body;
 
     if (!userId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID is required' 
+        message: 'User ID is required'
       });
     }
 
@@ -2488,14 +2676,14 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
     const user = users[0];
-    
+
     // Check if this is a social login account (has google_id or facebook_id)
     const isSocialLogin = !!(user.google_id || user.facebook_id);
 
@@ -2503,17 +2691,17 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'Password is required for security verification' 
+          message: 'Password is required for security verification'
         });
       }
 
       const isPasswordValid = await bcrypt.compare(password, user.password_hash);
       if (!isPasswordValid) {
-        return res.status(401).json({ 
+        return res.status(401).json({
           success: false,
-          message: 'Invalid password' 
+          message: 'Invalid password'
         });
       }
     }
@@ -2532,12 +2720,12 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     console.log('🔐 2FA Setup - Storing secret for user:', userId);
     console.log('🔐 2FA Setup - Secret (base32):', secret.base32);
     console.log('🔐 2FA Setup - Secret length:', secret.base32.length);
-    
+
     await pool.execute(
       'UPDATE users SET two_factor_secret = ? WHERE id = ?',
       [secret.base32, userIdBinary]
     );
-    
+
     // Verify it was stored
     const [check] = await pool.execute(
       'SELECT two_factor_secret FROM users WHERE id = ?',
@@ -2549,7 +2737,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     // Return the TOTP URL for QR code generation on client side
     console.log('🔐 2FA Setup - otpauth_url:', secret.otpauth_url);
     console.log('🔐 2FA Setup - otpauth_url length:', secret.otpauth_url.length);
-    
+
     res.json({
       success: true,
       secret: secret.base32,
@@ -2558,9 +2746,9 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error setting up 2FA:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2571,9 +2759,9 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     const { userId, token } = req.body;
 
     if (!userId || !token) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID and verification token are required' 
+        message: 'User ID and verification token are required'
       });
     }
 
@@ -2596,9 +2784,9 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     console.log('🔐 2FA Verify - Secret length:', users.length > 0 && users[0].two_factor_secret ? users[0].two_factor_secret.length : 0);
 
     if (users.length === 0 || !users[0].two_factor_secret) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: '2FA setup not initiated. Please go back and scan the QR code again.' 
+        message: '2FA setup not initiated. Please go back and scan the QR code again.'
       });
     }
 
@@ -2613,9 +2801,9 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     });
 
     if (!verified) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid verification code' 
+        message: 'Invalid verification code'
       });
     }
 
@@ -2645,7 +2833,7 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
       'UPDATE users SET two_factor_enabled = TRUE, backup_codes = ? WHERE id = ?',
       [JSON.stringify(hashedBackupCodes), userIdBinary]
     );
-    
+
     console.log('✅ Backup codes stored successfully');
 
     res.json({
@@ -2655,9 +2843,9 @@ app.post('/api/auth/2fa/verify', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error verifying 2FA:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2668,9 +2856,9 @@ app.post('/api/auth/2fa/disable', authenticateToken, async (req, res) => {
     const { userId, password } = req.body;
 
     if (!userId || !password) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID and password are required' 
+        message: 'User ID and password are required'
       });
     }
 
@@ -2683,9 +2871,9 @@ app.post('/api/auth/2fa/disable', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -2693,9 +2881,9 @@ app.post('/api/auth/2fa/disable', authenticateToken, async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Incorrect password' 
+        message: 'Incorrect password'
       });
     }
 
@@ -2711,9 +2899,9 @@ app.post('/api/auth/2fa/disable', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error disabling 2FA:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2724,9 +2912,9 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     const { userId, token, isBackupCode } = req.body;
 
     if (!userId || !token) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID and token are required' 
+        message: 'User ID and token are required'
       });
     }
 
@@ -2746,18 +2934,18 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
     const user = users[0];
 
     if (!user.two_factor_enabled) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: '2FA is not enabled for this account' 
+        message: '2FA is not enabled for this account'
       });
     }
 
@@ -2766,30 +2954,30 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     if (isBackupCode) {
       // Verify backup code
       if (!user.backup_codes) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'No backup codes available' 
+          message: 'No backup codes available'
         });
       }
 
       const backupCodes = JSON.parse(user.backup_codes);
-      
+
       // Check if any backup code matches
       for (let i = 0; i < backupCodes.length; i++) {
         const codeObj = backupCodes[i];
-        
+
         // Handle both old format (string) and new format (object)
         const hash = typeof codeObj === 'string' ? codeObj : codeObj.hash;
         const isUsed = typeof codeObj === 'object' && codeObj.used;
-        
+
         if (isUsed) {
           continue;
         }
-        
+
         const isMatch = await bcrypt.compare(token, hash);
         if (isMatch) {
           verified = true;
-          
+
           // Mark code as used
           if (typeof codeObj === 'object') {
             backupCodes[i].used = true;
@@ -2797,7 +2985,7 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
             // Old format: remove the code
             backupCodes.splice(i, 1);
           }
-          
+
           await pool.execute(
             'UPDATE users SET backup_codes = ? WHERE id = ?',
             [JSON.stringify(backupCodes), userIdBinary]
@@ -2816,9 +3004,9 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     }
 
     if (!verified) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid verification code' 
+        message: 'Invalid verification code'
       });
     }
 
@@ -2828,9 +3016,9 @@ app.post('/api/auth/2fa/validate', async (req, res) => {
     });
   } catch (error) {
     console.error('Error validating 2FA:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -2841,9 +3029,9 @@ app.post('/api/auth/2fa/login', async (req, res) => {
     const { userId, token, isBackupCode } = req.body;
 
     if (!userId || !token) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID and verification code are required' 
+        message: 'User ID and verification code are required'
       });
     }
 
@@ -2867,9 +3055,9 @@ app.post('/api/auth/2fa/login', async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -2877,9 +3065,9 @@ app.post('/api/auth/2fa/login', async (req, res) => {
     const userUuid = binaryToUuid(user.id);
 
     if (!user.two_factor_enabled) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: '2FA is not enabled for this account' 
+        message: '2FA is not enabled for this account'
       });
     }
 
@@ -2890,12 +3078,12 @@ app.post('/api/auth/2fa/login', async (req, res) => {
       console.log('🔐 Backup code verification requested');
       console.log('🔐 user.backup_codes exists:', !!user.backup_codes);
       console.log('🔐 user.backup_codes type:', typeof user.backup_codes);
-      
+
       if (!user.backup_codes) {
         console.log('❌ No backup codes in database');
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'No backup codes available. Please contact support or use your authenticator app.' 
+          message: 'No backup codes available. Please contact support or use your authenticator app.'
         });
       }
 
@@ -2906,39 +3094,39 @@ app.post('/api/auth/2fa/login', async (req, res) => {
       } catch (e) {
         console.log('❌ Failed to parse backup codes:', e.message);
         console.log('❌ Raw backup_codes value:', user.backup_codes.substring(0, 100));
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'Backup codes are corrupted. Please disable and re-enable 2FA.' 
+          message: 'Backup codes are corrupted. Please disable and re-enable 2FA.'
         });
       }
-      
+
       if (backupCodes.length === 0) {
         console.log('❌ No backup codes remaining');
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'All backup codes have been used. Please use your authenticator app or disable and re-enable 2FA to generate new codes.' 
+          message: 'All backup codes have been used. Please use your authenticator app or disable and re-enable 2FA to generate new codes.'
         });
       }
-      
+
       // Check if any backup code matches
       console.log(`🔐 Checking ${backupCodes.length} backup codes...`);
       for (let i = 0; i < backupCodes.length; i++) {
         const codeObj = backupCodes[i];
-        
+
         // Handle both old format (string) and new format (object)
         const hash = typeof codeObj === 'string' ? codeObj : codeObj.hash;
         const isUsed = typeof codeObj === 'object' && codeObj.used;
-        
+
         if (isUsed) {
           console.log(`⏭️  Skipping used code at index ${i}`);
           continue;
         }
-        
+
         const isMatch = await bcrypt.compare(token, hash);
         if (isMatch) {
           console.log(`✅ Backup code matched at index ${i}`);
           verified = true;
-          
+
           // Mark code as used (don't remove it so user can see it was used)
           if (typeof codeObj === 'object') {
             backupCodes[i].used = true;
@@ -2946,7 +3134,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
             // Old format: remove the code
             backupCodes.splice(i, 1);
           }
-          
+
           console.log(`🔐 Remaining unused codes: ${backupCodes.filter(c => typeof c === 'string' || !c.used).length}`);
           await pool.execute(
             'UPDATE users SET backup_codes = ? WHERE id = ?',
@@ -2955,7 +3143,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
           break;
         }
       }
-      
+
       if (!verified) {
         console.log('❌ No backup code matched');
       }
@@ -2967,7 +3155,7 @@ app.post('/api/auth/2fa/login', async (req, res) => {
         token: token,
         window: 2
       });
-      
+
       if (verified) {
         console.log('✅ TOTP token verified');
       } else {
@@ -2976,9 +3164,9 @@ app.post('/api/auth/2fa/login', async (req, res) => {
     }
 
     if (!verified) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: isBackupCode ? 'Invalid backup code' : 'Invalid verification code' 
+        message: isBackupCode ? 'Invalid backup code' : 'Invalid verification code'
       });
     }
 
@@ -3004,9 +3192,9 @@ app.post('/api/auth/2fa/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Error completing 2FA login:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -3019,9 +3207,9 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
     console.log('🔐 2FA biometric login request for user:', userId);
 
     if (!userId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'User ID is required' 
+        message: 'User ID is required'
       });
     }
 
@@ -3044,9 +3232,9 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
 
     if (users.length === 0) {
       console.log('❌ User not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -3055,9 +3243,9 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
 
     if (!user.two_factor_enabled) {
       console.log('❌ 2FA not enabled for user');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: '2FA is not enabled for this account' 
+        message: '2FA is not enabled for this account'
       });
     }
 
@@ -3087,9 +3275,9 @@ app.post('/api/auth/2fa/login/biometric', async (req, res) => {
     });
   } catch (error) {
     console.error('Error completing 2FA biometric login:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -3106,9 +3294,9 @@ app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
@@ -3118,9 +3306,9 @@ app.get('/api/auth/2fa/status/:userId', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting 2FA status:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -3139,18 +3327,18 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
     const user = users[0];
 
     if (!user.two_factor_enabled) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: '2FA is not enabled' 
+        message: '2FA is not enabled'
       });
     }
 
@@ -3161,17 +3349,17 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'Password is required' 
+          message: 'Password is required'
         });
       }
 
       const isPasswordValid = await bcrypt.compare(password, user.password_hash);
       if (!isPasswordValid) {
-        return res.status(401).json({ 
+        return res.status(401).json({
           success: false,
-          message: 'Invalid password' 
+          message: 'Invalid password'
         });
       }
     }
@@ -3213,9 +3401,9 @@ app.post('/api/auth/2fa/backup-codes', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting backup codes:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      message: 'Server error'
     });
   }
 });
@@ -3246,7 +3434,7 @@ async function updateSessionActivity(sessionId, userIdBinary) {
 async function updateConversationAnalytics(userId, sessionId, isBot, sentiment) {
   try {
     const today = new Date().toISOString().split('T')[0];
-    
+
     await pool.execute(`
       INSERT INTO conversation_analytics 
       (user_id, session_id, date, total_messages, user_messages, bot_messages)
@@ -3274,9 +3462,9 @@ app.get('/api/chats/:userId/messages/enhanced', optionalAuthenticateToken, async
   try {
     const userIdParam = req.params.userId;
     const { sessionId, limit = 50, offset = 0 } = req.query;
-    
+
     console.log(`[GET Enhanced Messages] Request for userId: ${userIdParam}, sessionId: ${sessionId}`);
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -3340,20 +3528,20 @@ app.get('/api/chats/:userId/messages/enhanced', optionalAuthenticateToken, async
 app.post('/api/chats/:userId/messages/enhanced', optionalAuthenticateToken, async (req, res) => {
   try {
     const userIdParam = req.params.userId;
-    const { 
-      text, 
-      isBot, 
-      error, 
-      intent, 
-      sentiment, 
-      confidence, 
-      entities, 
-      metadata, 
-      sessionId 
+    const {
+      text,
+      isBot,
+      error,
+      intent,
+      sentiment,
+      confidence,
+      entities,
+      metadata,
+      sessionId
     } = req.body;
-    
+
     console.log(`[POST Enhanced Message] Request for userId: ${userIdParam}, sessionId: ${sessionId}`);
-    
+
     // Validate required fields
     if (!text || typeof isBot !== 'boolean') {
       return res.status(400).json({ message: 'Text and isBot are required' });
@@ -3423,7 +3611,7 @@ app.post('/api/chats/:userId/sessions', optionalAuthenticateToken, async (req, r
   try {
     const userIdParam = req.params.userId;
     const { sessionId, context, preferences } = req.body;
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -3470,7 +3658,7 @@ app.post('/api/chats/:userId/sessions', optionalAuthenticateToken, async (req, r
 app.get('/api/chats/:userId/sessions/:sessionId', optionalAuthenticateToken, async (req, res) => {
   try {
     const { userId, sessionId } = req.params;
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
@@ -3515,7 +3703,7 @@ app.post('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req
   try {
     const userIdParam = req.params.userId;
     const { preferences } = req.body; // Object with key-value pairs
-    
+
     if (!preferences || typeof preferences !== 'object') {
       return res.status(400).json({ message: 'Preferences object is required' });
     }
@@ -3560,7 +3748,7 @@ app.post('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req
 app.get('/api/chats/:userId/preferences', optionalAuthenticateToken, async (req, res) => {
   try {
     const userIdParam = req.params.userId;
-    
+
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userIdParam)) {
@@ -3610,14 +3798,14 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found'
       });
     }
 
     const user = users[0];
-    
+
     // Check if this is a social login account (has google_id or facebook_id)
     const isSocialLogin = !!(user.google_id || user.facebook_id);
 
@@ -3625,17 +3813,17 @@ app.post('/api/auth/biometric/enable', authenticateToken, async (req, res) => {
     if (!isSocialLogin) {
       // Regular account - password verification required
       if (!password) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'Password is required for security verification' 
+          message: 'Password is required for security verification'
         });
       }
 
       const isPasswordValid = await bcrypt.compare(password, user.password_hash);
       if (!isPasswordValid) {
-        return res.status(401).json({ 
+        return res.status(401).json({
           success: false,
-          message: 'Invalid password' 
+          message: 'Invalid password'
         });
       }
     }
@@ -3777,8 +3965,8 @@ app.post('/api/auth/biometric/validate', async (req, res) => {
         const user = rows[0];
         // Convert HEX back to UUID format
         const hexId = user.id;
-        const formattedId = `${hexId.substr(0,8)}-${hexId.substr(8,4)}-${hexId.substr(12,4)}-${hexId.substr(16,4)}-${hexId.substr(20,12)}`.toLowerCase();
-        
+        const formattedId = `${hexId.substr(0, 8)}-${hexId.substr(8, 4)}-${hexId.substr(12, 4)}-${hexId.substr(16, 4)}-${hexId.substr(20, 12)}`.toLowerCase();
+
         console.log('✅ User found:', user.email);
         console.log('Biometric enabled in DB:', user.biometric_enabled);
 
@@ -3956,16 +4144,16 @@ app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
     const userId = req.user.userId;
 
     if (!preferenceType || enabled === undefined) {
-      return res.status(400).json({ 
-        message: 'preferenceType and enabled are required' 
+      return res.status(400).json({
+        message: 'preferenceType and enabled are required'
       });
     }
 
     // Validate preference type
     const validTypes = ['analytics'];
     if (!validTypes.includes(preferenceType)) {
-      return res.status(400).json({ 
-        message: 'Invalid preference type. Must be analytics' 
+      return res.status(400).json({
+        message: 'Invalid preference type. Must be analytics'
       });
     }
 
@@ -3989,9 +4177,9 @@ app.put('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
       ON DUPLICATE KEY UPDATE ${preferenceType} = ?, updated_at = NOW()
     `, [userIdBinary, enabled ? 1 : 0, enabled ? 1 : 0]);
 
-    res.json({ 
-      success: true, 
-      message: 'Privacy preference updated successfully' 
+    res.json({
+      success: true,
+      message: 'Privacy preference updated successfully'
     });
   } catch (error) {
     console.error('Error updating privacy preference:', error);
@@ -4060,8 +4248,8 @@ app.delete('/api/users/account', authenticateToken, async (req, res) => {
     // For email users, verify password
     if (!isSocialLogin) {
       if (!password) {
-        return res.status(400).json({ 
-          message: 'Password is required to delete account' 
+        return res.status(400).json({
+          message: 'Password is required to delete account'
         });
       }
 
@@ -4074,9 +4262,9 @@ app.delete('/api/users/account', authenticateToken, async (req, res) => {
     // Delete user account (CASCADE will delete related data)
     await pool.execute('DELETE FROM users WHERE id = ?', [userIdBinary]);
 
-    res.json({ 
-      success: true, 
-      message: 'Account deleted successfully' 
+    res.json({
+      success: true,
+      message: 'Account deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting account:', error);
