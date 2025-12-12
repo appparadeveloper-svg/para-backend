@@ -709,10 +709,22 @@ app.post('/api/auth/facebook', async (req, res) => {
         userIdBinary = existingUserByEmail[0].id;
         isNewUser = false; // This is an existing user, not a new registration
         
-        await pool.execute(
-          'UPDATE users SET facebook_id = ?, avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-          [facebookId, photoUrl, now, userIdBinary]
-        );
+        // Check if syncProfile parameter is provided
+        const syncProfile = req.body.syncProfile === true;
+        
+        if (syncProfile) {
+          // User chose to sync profile data from Facebook
+          await pool.execute(
+            'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+            [facebookId, fullName, photoUrl, now, userIdBinary]
+          );
+        } else {
+          // Only link the Facebook ID, preserve existing profile data
+          await pool.execute(
+            'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+            [facebookId, now, userIdBinary]
+          );
+        }
 
         // Get updated user details including 2FA status
         const [userDetails] = await pool.execute(
@@ -883,10 +895,22 @@ app.post('/api/auth/google', async (req, res) => {
         userIdBinary = existingUserByEmail[0].id;
         isNewUser = false; // This is an existing user, not a new registration
         
-        await pool.execute(
-          'UPDATE users SET google_id = ?, avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-          [googleId, photoUrl, now, userIdBinary]
-        );
+        // Check if syncProfile parameter is provided
+        const syncProfile = req.body.syncProfile === true;
+        
+        if (syncProfile) {
+          // User chose to sync profile data from Google
+          await pool.execute(
+            'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+            [googleId, fullName, photoUrl, now, userIdBinary]
+          );
+        } else {
+          // Only link the Google ID, preserve existing profile data
+          await pool.execute(
+            'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
+            [googleId, now, userIdBinary]
+          );
+        }
 
         // Get updated user details including 2FA status
         const [userDetails] = await pool.execute(
