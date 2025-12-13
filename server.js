@@ -1130,16 +1130,53 @@ app.post('/api/auth/google', async (req, res) => {
       } else {
         // Not logged in - check if email is already registered (regular auth)
         const [existingUserByEmail] = await pool.execute(
-          `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
+          `SELECT 
+            id,
+            CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+            CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+            avatar_url,
+            email_verified,
+            google_id,
+            two_factor_enabled
+          FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ?`,
           [email]
         );
 
         if (existingUserByEmail.length > 0) {
-          // Email exists with regular auth - Link Google account
+          // Email exists with regular auth
           userIdBinary = existingUserByEmail[0].id;
+          const existingUser = existingUserByEmail[0];
           isNewUser = false; // This is an existing user, not a new registration
 
-          // Check if syncProfile parameter is provided
+          // Check if this is just a detection request (no confirmLink flag)
+          const confirmLink = req.body.confirmLink === true;
+
+          if (!confirmLink) {
+            // Account exists - ask user if they want to link
+            console.log('📋 Existing account detected - asking user for confirmation');
+            
+            const userUuid = binaryToUuid(existingUser.id);
+            
+            return res.status(200).json({
+              message: 'Account already exists with this email',
+              accountExists: true,
+              needsLinking: true,
+              existingUser: {
+                fullName: existingUser.full_name,
+                email: existingUser.email,
+                avatarUrl: existingUser.avatar_url
+              },
+              socialProviderData: {
+                fullName: fullName,
+                photoUrl: photoUrl,
+                googleId: googleId
+              },
+              userId: userUuid
+            });
+          }
+
+          // User has confirmed - proceed with linking
+          console.log('✅ User confirmed - proceeding with Google account linking');
           const syncProfile = req.body.syncProfile === true;
 
           if (syncProfile) {
