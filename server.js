@@ -1400,6 +1400,99 @@ app.post('/api/auth/google/confirm-link', authenticateToken, async (req, res) =>
   }
 });
 
+// Unlink social account endpoint
+app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
+  try {
+    const { provider } = req.body;
+    const userId = req.user.userId;
+
+    if (!provider || !['google', 'facebook'].includes(provider.toLowerCase())) {
+      return res.status(400).json({
+        message: 'Invalid provider. Must be "google" or "facebook"'
+      });
+    }
+
+    const userIdBinary = uuidToBinary(userId);
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get current user to check if they have a password
+    const [userRows] = await pool.execute(
+      `SELECT 
+        password_hash,
+        google_id,
+        facebook_id,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (userRows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = userRows[0];
+    const providerLower = provider.toLowerCase();
+    const providerField = providerLower === 'google' ? 'google_id' : 'facebook_id';
+
+    // Check if the account is actually linked
+    if (!user[providerField]) {
+      return res.status(400).json({
+        message: `${provider} account is not linked to this account`
+      });
+    }
+
+    // Security check: Don't allow unlinking if it's the only auth method
+    const hasPassword = !!user.password_hash;
+    const hasGoogle = !!user.google_id;
+    const hasFacebook = !!user.facebook_id;
+    const authMethodsCount = [hasPassword, hasGoogle, hasFacebook].filter(Boolean).length;
+
+    if (authMethodsCount <= 1) {
+      return res.status(400).json({
+        message: 'Cannot unlink. You must have at least one authentication method (password or another social account). Please set a password first.',
+        code: 'LAST_AUTH_METHOD'
+      });
+    }
+
+    // Unlink the social account
+    const updateQuery = `UPDATE users SET ${providerField} = NULL WHERE id = ?`;
+    await pool.execute(updateQuery, [userIdBinary]);
+
+    console.log(`✅ ${provider} account unlinked for user ${userId}`);
+
+    // Get updated user details
+    const [updatedUserRows] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        avatar_url,
+        email_verified,
+        google_id,
+        facebook_id,
+        two_factor_enabled
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    const updatedUser = updatedUserRows[0];
+
+    return res.status(200).json({
+      success: true,
+      message: `${provider} account unlinked successfully`,
+      user: formatUserResponse(updatedUser)
+    });
+
+  } catch (error) {
+    console.error('❌ Social account unlink error:', error);
+    return res.status(500).json({
+      message: 'Internal server error during social account unlinking'
+    });
+  }
+});
+
 // ==========================================
 // User profile endpoints (auth required)
 // ==========================================
