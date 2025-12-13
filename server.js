@@ -762,14 +762,14 @@ app.post('/api/auth/facebook', async (req, res) => {
         if (syncProfile) {
           // User chose to sync profile data from Facebook
           await pool.execute(
-            'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-            [facebookId, fullName, photoUrl, now, userIdBinary]
+            'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1, facebook_linked_at = ? WHERE id = ?',
+            [facebookId, fullName, photoUrl, now, now, userIdBinary]
           );
         } else {
           // Only link the Facebook ID, preserve existing profile data
           await pool.execute(
-            'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-            [facebookId, now, userIdBinary]
+            'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1, facebook_linked_at = ? WHERE id = ?',
+            [facebookId, now, now, userIdBinary]
           );
         }
 
@@ -806,14 +806,14 @@ app.post('/api/auth/facebook', async (req, res) => {
           if (syncProfile) {
             // User chose to sync profile data from Facebook
             await pool.execute(
-              'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-              [facebookId, fullName, photoUrl, now, userIdBinary]
+              'UPDATE users SET facebook_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1, facebook_linked_at = ? WHERE id = ?',
+              [facebookId, fullName, photoUrl, now, now, userIdBinary]
             );
           } else {
             // Only link the Facebook ID, preserve existing profile data
             await pool.execute(
-              'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-              [facebookId, now, userIdBinary]
+              'UPDATE users SET facebook_id = ?, last_login_attempt = ?, email_verified = 1, facebook_linked_at = ? WHERE id = ?',
+              [facebookId, now, now, userIdBinary]
             );
           }
 
@@ -1101,14 +1101,14 @@ app.post('/api/auth/google', async (req, res) => {
         if (syncProfile) {
           // User chose to sync profile data from Google
           await pool.execute(
-            'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-            [googleId, fullName, photoUrl, now, userIdBinary]
+            'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+            [googleId, fullName, photoUrl, now, now, userIdBinary]
           );
         } else {
           // Only link the Google ID, preserve existing profile data
           await pool.execute(
-            'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-            [googleId, now, userIdBinary]
+            'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+            [googleId, now, now, userIdBinary]
           );
         }
 
@@ -1182,14 +1182,14 @@ app.post('/api/auth/google', async (req, res) => {
           if (syncProfile) {
             // User chose to sync profile data from Google
             await pool.execute(
-              'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-              [googleId, fullName, photoUrl, now, userIdBinary]
+              'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+              [googleId, fullName, photoUrl, now, now, userIdBinary]
             );
           } else {
             // Only link the Google ID, preserve existing profile data
             await pool.execute(
-              'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-              [googleId, now, userIdBinary]
+              'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+              [googleId, now, now, userIdBinary]
             );
           }
 
@@ -1357,15 +1357,15 @@ app.post('/api/auth/google/confirm-link', authenticateToken, async (req, res) =>
     // Perform the linking
     if (syncProfile) {
       await pool.execute(
-        'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-        [googleId, fullName, photoUrl, now, userIdBinary]
+        'UPDATE users SET google_id = ?, full_name = AES_ENCRYPT(?, ' + encryptionKey + '), avatar_url = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+        [googleId, fullName, photoUrl, now, now, userIdBinary]
       );
       console.log('✅ Google linked with profile sync');
     } else {
       // Only link Google ID, preserve existing profile data
       await pool.execute(
-        'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1 WHERE id = ?',
-        [googleId, now, userIdBinary]
+        'UPDATE users SET google_id = ?, last_login_attempt = ?, email_verified = 1, google_linked_at = ? WHERE id = ?',
+        [googleId, now, now, userIdBinary]
       );
       console.log('✅ Google linked without profile sync');
     }
@@ -1456,8 +1456,10 @@ app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
     }
 
     // Unlink the social account
-    const updateQuery = `UPDATE users SET ${providerField} = NULL WHERE id = ?`;
-    await pool.execute(updateQuery, [userIdBinary]);
+    const now = new Date();
+    const unlinkedAtField = providerLower === 'google' ? 'google_unlinked_at' : 'facebook_unlinked_at';
+    const updateQuery = `UPDATE users SET ${providerField} = NULL, ${unlinkedAtField} = ? WHERE id = ?`;
+    await pool.execute(updateQuery, [now, userIdBinary]);
 
     console.log(`✅ ${provider} account unlinked for user ${userId}`);
 
@@ -1510,6 +1512,10 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
               two_factor_enabled,
               google_id,
               facebook_id,
+              google_linked_at,
+              google_unlinked_at,
+              facebook_linked_at,
+              facebook_unlinked_at,
               created_at, updated_at, name_changed_at
        FROM users WHERE id = ?`,
       [uuidToBinary(id)]
@@ -1527,6 +1533,10 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       isSocialLogin: isSocialLogin,
       googleId: u.google_id || null,
       facebookId: u.facebook_id || null,
+      googleLinkedAt: u.google_linked_at || null,
+      googleUnlinkedAt: u.google_unlinked_at || null,
+      facebookLinkedAt: u.facebook_linked_at || null,
+      facebookUnlinkedAt: u.facebook_unlinked_at || null,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
       nameChangedAt: u.name_changed_at || null,
