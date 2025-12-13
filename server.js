@@ -163,6 +163,7 @@ function formatUserResponse(user) {
     emailVerified: user.email_verified || false,
     twoFactorEnabled: user.two_factor_enabled || false,
     isSocialLogin: isSocialLogin,
+    hasPassword: user.has_password || false,
     googleId: user.google_id || null,
     facebookId: user.facebook_id || null,
   };
@@ -497,6 +498,7 @@ app.post('/api/auth/login', async (req, res) => {
         old_password_hash,
         password_changed_at,
         two_factor_enabled,
+        has_password,
         google_id,
         facebook_id,
         is_locked,
@@ -2760,7 +2762,7 @@ app.post('/api/auth/set-password', authenticateToken, async (req, res) => {
 
     // Get user's current info
     const [users] = await pool.execute(
-      'SELECT id, password_hash, google_id, facebook_id FROM users WHERE id = ?',
+      'SELECT id, password_hash, google_id, facebook_id, has_password FROM users WHERE id = ?',
       [userIdBinary]
     );
 
@@ -2776,23 +2778,8 @@ app.post('/api/auth/set-password', authenticateToken, async (req, res) => {
     // Check if user is a social login user (has google_id or facebook_id)
     const isSocialLogin = !!(user.google_id || user.facebook_id);
 
-    // Check if user already has a usable password
-    // (by trying to verify a random string - if it fails, they have the random placeholder)
-    let hasUsablePassword = false;
-    try {
-      // Try to compare with a random string - if the hash is the random placeholder,
-      // this will always fail, indicating they don't have a real password
-      const testResult = await bcrypt.compare('test_random_string_12345', user.password_hash);
-      // If we get here without error, check if they can actually use their current password
-      // by seeing if it matches anything reasonable
-      hasUsablePassword = false; // We'll assume the random hash can't be used
-    } catch (e) {
-      hasUsablePassword = false;
-    }
-
-    // For social login users, we allow setting a password even if they have the random placeholder
-    // For regular users, they should use change-password endpoint instead
-    if (!isSocialLogin && user.password_hash) {
+    // Check if user already has a password set
+    if (user.has_password) {
       return res.status(400).json({
         success: false,
         message: 'You already have a password. Use the change password feature instead.',
@@ -2800,12 +2787,21 @@ app.post('/api/auth/set-password', authenticateToken, async (req, res) => {
       });
     }
 
+    // Only allow social login users to set a password
+    if (!isSocialLogin) {
+      return res.status(400).json({
+        success: false,
+        message: 'This feature is only for social login users.',
+        useChangePassword: true
+      });
+    }
+
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
-    // Set password (store old hash if it exists)
+    // Set password (store old hash if it exists) and mark has_password as TRUE
     await pool.execute(
-      'UPDATE users SET password_hash = ?, old_password_hash = ?, password_changed_at = NOW() WHERE id = ?',
+      'UPDATE users SET password_hash = ?, old_password_hash = ?, password_changed_at = NOW(), has_password = TRUE WHERE id = ?',
       [hashedPassword, user.password_hash, userIdBinary]
     );
 
