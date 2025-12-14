@@ -1417,12 +1417,15 @@ app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
     const userIdBinary = uuidToBinary(userId);
     const encryptionKey = getEncryptionKeyQuery();
 
-    // Get current user to check if they have a password
+    // Get current user to check if they have a password and account creation method
     const [userRows] = await pool.execute(
       `SELECT 
         password_hash,
         google_id,
         facebook_id,
+        google_linked_at,
+        facebook_linked_at,
+        created_at,
         CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email
        FROM users 
        WHERE id = ?`,
@@ -1436,6 +1439,7 @@ app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
     const user = userRows[0];
     const providerLower = provider.toLowerCase();
     const providerField = providerLower === 'google' ? 'google_id' : 'facebook_id';
+    const linkedAtField = providerLower === 'google' ? 'google_linked_at' : 'facebook_linked_at';
 
     // Check if the account is actually linked
     if (!user[providerField]) {
@@ -1444,10 +1448,30 @@ app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
       });
     }
 
-    // Security check: Don't allow unlinking if it's the only auth method
     const hasPassword = !!user.password_hash;
     const hasGoogle = !!user.google_id;
     const hasFacebook = !!user.facebook_id;
+
+    // Determine if this provider was used to create the account (primary provider)
+    // A provider is primary if:
+    // 1. It's linked AND
+    // 2. Either linked_at is NULL (created with it) OR linked_at equals created_at (within 1 second)
+    const linkedAt = user[linkedAtField];
+    const createdAt = user.created_at;
+    const isPrimaryProvider = !linkedAt || 
+      (linkedAt && createdAt && Math.abs(new Date(linkedAt) - new Date(createdAt)) < 1000);
+
+    // If this is the primary provider (used to create account), require password
+    if (isPrimaryProvider && !hasPassword) {
+      return res.status(400).json({
+        message: `Cannot unlink ${provider} account. This is your primary sign-in method. Please set a password first to ensure you can still access your account.`,
+        code: 'PRIMARY_PROVIDER_REQUIRES_PASSWORD',
+        isPrimaryProvider: true,
+        requiresPassword: true
+      });
+    }
+
+    // Security check: Don't allow unlinking if it's the only auth method
     const authMethodsCount = [hasPassword, hasGoogle, hasFacebook].filter(Boolean).length;
 
     if (authMethodsCount <= 1) {
