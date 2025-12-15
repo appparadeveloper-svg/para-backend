@@ -1461,8 +1461,10 @@ app.post('/api/auth/unlink-social', authenticateToken, async (req, res) => {
     const isPrimaryProvider = !linkedAt || 
       (linkedAt && createdAt && Math.abs(new Date(linkedAt) - new Date(createdAt)) < 1000);
 
-    // If this is the primary provider (used to create account), require password
+    // CRITICAL: If this is the primary provider (used to create account) and user has no password,
+    // they MUST set a password before unlinking to prevent account lockout
     if (isPrimaryProvider && !hasPassword) {
+      console.log(`⚠️  Blocked unlink attempt: User ${userId} tried to unlink primary ${provider} account without password`);
       return res.status(400).json({
         message: `Cannot unlink ${provider} account. This is your primary sign-in method. Please set a password first to ensure you can still access your account.`,
         code: 'PRIMARY_PROVIDER_REQUIRES_PASSWORD',
