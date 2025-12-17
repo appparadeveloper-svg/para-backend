@@ -4478,6 +4478,430 @@ app.get('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
   }
 });
 
+// =============================
+// Email Change Feature
+// =============================
+
+// Helper function to send email change verification
+async function sendEmailChangeVerification(newEmail, fullName, verificationToken, oldEmail) {
+  const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email-change'}?token=${verificationToken}`;
+
+  const mailOptions = {
+    from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
+    to: newEmail,
+    subject: 'Verify Your New Email Address - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .warning-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Email Change Request</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>You requested to change your email address from <strong>${oldEmail}</strong> to <strong>${newEmail}</strong>.</p>
+            <p>To complete this change, please verify your new email address by clicking the button below:</p>
+            <div style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verify New Email</a>
+            </div>
+            <div class="warning-box">
+              <strong>⚠️ Important:</strong>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>This link will expire in 24 hours</li>
+                <li>After verification, you'll be logged out from all devices</li>
+                <li>You won't be able to change your email again for 30 days</li>
+              </ul>
+            </div>
+            <p>If you didn't request this change, please ignore this email and your email address will remain unchanged.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Email change verification sent to ${newEmail}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending email change verification:', error);
+    return false;
+  }
+}
+
+// Helper function to send notification to old email
+async function sendEmailChangeNotification(oldEmail, fullName, newEmail) {
+  const mailOptions = {
+    from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
+    to: oldEmail,
+    subject: 'Email Change Request - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .alert-box { background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px; color: #721c24; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>⚠️ Email Change Request</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>A request has been made to change your email address from <strong>${oldEmail}</strong> to <strong>${newEmail}</strong>.</p>
+            <div class="alert-box">
+              <strong>If you made this request:</strong>
+              <p style="margin: 10px 0;">Please verify the new email address by clicking the link sent to ${newEmail}.</p>
+            </div>
+            <div class="alert-box">
+              <strong>If you did NOT make this request:</strong>
+              <p style="margin: 10px 0;">Your account may be compromised. Please change your password immediately and contact support.</p>
+            </div>
+            <p>This notification is for your security. No action is required unless you did not initiate this change.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Email change notification sent to ${oldEmail}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending email change notification:', error);
+    return false;
+  }
+}
+
+// Request email change
+app.post('/api/users/request-email-change', authenticateToken, async (req, res) => {
+  try {
+    const { newEmail, password } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!newEmail || !password) {
+      return res.status(400).json({ message: 'New email and password are required' });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail)) {
+      return res.status(400).json({ message: 'Invalid email format' });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+    const userIdBinary = uuidToBinary(userId);
+
+    // Get current user data
+    const [users] = await pool.execute(
+      `SELECT 
+        id,
+        CAST(AES_DECRYPT(full_name, ${encryptionKey}) AS CHAR) as full_name,
+        CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) as email,
+        password_hash,
+        has_password,
+        last_email_change,
+        google_id,
+        facebook_id
+       FROM users 
+       WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = users[0];
+
+    // Check if user has a password (social login users must set password first)
+    if (!user.has_password) {
+      return res.status(400).json({
+        message: 'You must set a password before changing your email address',
+        requiresPassword: true
+      });
+    }
+
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Incorrect password' });
+    }
+
+    // Check if new email is same as current
+    if (user.email.toLowerCase() === newEmail.toLowerCase()) {
+      return res.status(400).json({ message: 'New email is the same as your current email' });
+    }
+
+    // Check cooldown period (30 days)
+    if (user.last_email_change) {
+      const lastChange = new Date(user.last_email_change);
+      const now = new Date();
+      const daysSinceLastChange = Math.floor((now - lastChange) / (1000 * 60 * 60 * 24));
+      const cooldownDays = 30;
+
+      if (daysSinceLastChange < cooldownDays) {
+        const daysRemaining = cooldownDays - daysSinceLastChange;
+        return res.status(429).json({
+          message: `You can only change your email once every ${cooldownDays} days. Please try again in ${daysRemaining} day${daysRemaining > 1 ? 's' : ''}.`,
+          daysRemaining,
+          lastChange: user.last_email_change
+        });
+      }
+    }
+
+    // Check if new email is already in use
+    const [existingEmail] = await pool.execute(
+      `SELECT id FROM users WHERE CAST(AES_DECRYPT(email, ${encryptionKey}) AS CHAR) = ? AND id != ?`,
+      [newEmail, userIdBinary]
+    );
+
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ message: 'This email is already registered' });
+    }
+
+    // Cancel any pending email change requests
+    await pool.execute(
+      `UPDATE email_change_requests SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`,
+      [userIdBinary]
+    );
+
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    // Create email change request
+    await pool.execute(
+      `INSERT INTO email_change_requests (user_id, old_email, new_email, verification_token, token_expires_at, status)
+       VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [userIdBinary, user.email, newEmail, verificationToken, tokenExpiry]
+    );
+
+    // Send verification email to new address
+    await sendEmailChangeVerification(newEmail, user.full_name, verificationToken, user.email);
+
+    // Send notification to old address
+    await sendEmailChangeNotification(user.email, user.full_name, newEmail);
+
+    res.json({
+      message: 'Verification email sent to your new email address. Please check your inbox.',
+      newEmail: newEmail
+    });
+  } catch (error) {
+    console.error('Request email change error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify email change
+app.post('/api/users/verify-email-change', async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ message: 'Verification token is required' });
+    }
+
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Find the email change request
+    const [requests] = await pool.execute(
+      `SELECT 
+        ecr.id,
+        ecr.user_id,
+        ecr.old_email,
+        ecr.new_email,
+        ecr.token_expires_at,
+        ecr.status,
+        CAST(AES_DECRYPT(u.full_name, ${encryptionKey}) AS CHAR) as full_name
+       FROM email_change_requests ecr
+       JOIN users u ON ecr.user_id = u.id
+       WHERE ecr.verification_token = ? AND ecr.status = 'pending'`,
+      [token]
+    );
+
+    if (requests.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired verification token' });
+    }
+
+    const request = requests[0];
+
+    // Check if token has expired
+    if (new Date() > new Date(request.token_expires_at)) {
+      await pool.execute(
+        `UPDATE email_change_requests SET status = 'expired' WHERE id = ?`,
+        [request.id]
+      );
+      return res.status(400).json({ message: 'Verification token has expired' });
+    }
+
+    // Update user email
+    await pool.execute(
+      `UPDATE users 
+       SET email = AES_ENCRYPT(?, ${encryptionKey}),
+           last_email_change = NOW(),
+           email_change_count = email_change_count + 1,
+           email_verified = 1
+       WHERE id = ?`,
+      [request.new_email, request.user_id]
+    );
+
+    // Mark request as verified
+    await pool.execute(
+      `UPDATE email_change_requests SET status = 'verified', verified_at = NOW() WHERE id = ?`,
+      [request.id]
+    );
+
+    // Add to history
+    await pool.execute(
+      `INSERT INTO email_change_history (user_id, old_email, new_email, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?)`,
+      [request.user_id, request.old_email, request.new_email, req.ip, req.get('user-agent')]
+    );
+
+    // Invalidate all existing sessions (user will need to log in again)
+    // This is handled on the client side by clearing tokens
+
+    res.json({
+      message: 'Email changed successfully! Please log in with your new email address.',
+      newEmail: request.new_email,
+      requiresLogin: true
+    });
+  } catch (error) {
+    console.error('Verify email change error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Cancel email change request
+app.post('/api/users/cancel-email-change', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    // Cancel pending requests
+    const [result] = await pool.execute(
+      `UPDATE email_change_requests SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`,
+      [userIdBinary]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'No pending email change request found' });
+    }
+
+    res.json({ message: 'Email change request cancelled successfully' });
+  } catch (error) {
+    console.error('Cancel email change error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get email change status
+app.get('/api/users/email-change-status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userIdBinary = uuidToBinary(userId);
+
+    const encryptionKey = getEncryptionKeyQuery();
+
+    // Get user's last email change and pending requests
+    const [users] = await pool.execute(
+      `SELECT last_email_change, email_change_count FROM users WHERE id = ?`,
+      [userIdBinary]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = users[0];
+
+    // Check for pending requests
+    const [pendingRequests] = await pool.execute(
+      `SELECT new_email, created_at, token_expires_at 
+       FROM email_change_requests 
+       WHERE user_id = ? AND status = 'pending'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userIdBinary]
+    );
+
+    // Calculate cooldown
+    let canChangeEmail = true;
+    let daysUntilNextChange = 0;
+
+    if (user.last_email_change) {
+      const lastChange = new Date(user.last_email_change);
+      const now = new Date();
+      const daysSinceLastChange = Math.floor((now - lastChange) / (1000 * 60 * 60 * 24));
+      const cooldownDays = 30;
+
+      if (daysSinceLastChange < cooldownDays) {
+        canChangeEmail = false;
+        daysUntilNextChange = cooldownDays - daysSinceLastChange;
+      }
+    }
+
+    res.json({
+      canChangeEmail,
+      daysUntilNextChange,
+      lastEmailChange: user.last_email_change,
+      emailChangeCount: user.email_change_count || 0,
+      hasPendingRequest: pendingRequests.length > 0,
+      pendingRequest: pendingRequests.length > 0 ? {
+        newEmail: pendingRequests[0].new_email,
+        requestedAt: pendingRequests[0].created_at,
+        expiresAt: pendingRequests[0].token_expires_at
+      } : null
+    });
+  } catch (error) {
+    console.error('Get email change status error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 // =============================
 // Account Deletion Endpoint
