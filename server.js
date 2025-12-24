@@ -4486,6 +4486,12 @@ app.get('/api/users/privacy-preferences', authenticateToken, async (req, res) =>
 async function sendEmailChangeVerification(newEmail, fullName, verificationToken, oldEmail) {
   const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email-change'}?token=${verificationToken}`;
 
+  // Try SendGrid API first if configured
+  if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
+    return await sendEmailChangeVerificationViaSendGridAPI(newEmail, fullName, verificationToken, oldEmail);
+  }
+
+  // Fallback to SMTP
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
     to: newEmail,
@@ -4548,6 +4554,82 @@ async function sendEmailChangeVerification(newEmail, fullName, verificationToken
     return true;
   } catch (error) {
     console.error('❌ Error sending email change verification:', error);
+    return false;
+  }
+}
+
+// SendGrid API for email change verification
+async function sendEmailChangeVerificationViaSendGridAPI(newEmail, fullName, verificationToken, oldEmail) {
+  const sgMail = require('@sendgrid/mail');
+  sgMail.setApiKey(process.env.EMAIL_PASSWORD);
+
+  const verificationUrl = `${process.env.FRONTEND_URL || 'paraapp://verify-email-change'}?token=${verificationToken}`;
+
+  const msg = {
+    to: newEmail,
+    from: {
+      email: process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER,
+      name: process.env.EMAIL_FROM_NAME || 'Para App'
+    },
+    subject: 'Verify Your New Email Address - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+          .button:hover { opacity: 0.9; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .warning-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Email Change Request</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>You requested to change your email address from <strong>${oldEmail}</strong> to <strong>${newEmail}</strong>.</p>
+            <p>To complete this change, please verify your new email address by clicking the button below:</p>
+            <div style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verify New Email</a>
+            </div>
+            <div class="warning-box">
+              <strong>⚠️ Important:</strong>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>This link will expire in 24 hours</li>
+                <li>After verification, you'll be logged out from all devices</li>
+                <li>You won't be able to change your email again for 30 days</li>
+              </ul>
+            </div>
+            <p>If you didn't request this change, please ignore this email and your email address will remain unchanged.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Email change verification sent via SendGrid API to ${newEmail}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending via SendGrid API:', error.response?.body || error);
     return false;
   }
 }
@@ -4720,9 +4802,22 @@ app.post('/api/users/request-email-change', authenticateToken, async (req, res) 
     );
 
     // Send verification email to new address
-    await sendEmailChangeVerification(newEmail, user.full_name, verificationToken, user.email);
+    const verificationSent = await sendEmailChangeVerification(newEmail, user.full_name, verificationToken, user.email);
+    
+    if (!verificationSent) {
+      // Rollback the email change request if email fails
+      await pool.execute(
+        `DELETE FROM email_change_requests WHERE user_id = ? AND verification_token = ?`,
+        [userIdBinary, verificationToken]
+      );
+      
+      return res.status(503).json({ 
+        message: 'Unable to send verification email at this time. Please try again later.',
+        error: 'EMAIL_DELIVERY_FAILED'
+      });
+    }
 
-    // Send notification to old address
+    // Send notification to old address (non-critical, don't fail if this doesn't work)
     await sendEmailChangeNotification(user.email, user.full_name, newEmail);
 
     res.json({
