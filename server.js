@@ -330,7 +330,7 @@ async function sendVerificationEmailViaSendGridAPI(email, fullName, verification
   const sgMail = require('@sendgrid/mail');
   sgMail.setApiKey(process.env.EMAIL_PASSWORD);
 
-  const verificationUrl = `https://para-backend-eukj.onrender.com/api/auth/verify-email/${verificationToken}?redirect=paraapp://verify-email`;
+  const verificationUrl = `https://para-backend-wdpc.onrender.com/api/auth/verify-email/${verificationToken}?redirect=paraapp://verify-email`;
 
   const msg = {
     to: email,
@@ -2373,7 +2373,7 @@ async function sendPasswordResetEmailViaSendGridAPI(email, fullName, resetToken)
   const sgMail = require('@sendgrid/mail');
   sgMail.setApiKey(process.env.EMAIL_PASSWORD);
 
-  const resetUrl = `https://para-backend-eukj.onrender.com/api/auth/reset-password/${resetToken}?redirect=paraapp://reset-password`;
+  const resetUrl = `https://para-backend-wdpc.onrender.com/api/auth/reset-password/${resetToken}?redirect=paraapp://reset-password`;
 
   const msg = {
     to: email,
