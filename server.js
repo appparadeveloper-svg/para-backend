@@ -4636,6 +4636,12 @@ async function sendEmailChangeVerificationViaSendGridAPI(newEmail, fullName, ver
 
 // Helper function to send notification to old email
 async function sendEmailChangeNotification(oldEmail, fullName, newEmail) {
+  // Try SendGrid API first if configured
+  if (process.env.EMAIL_HOST === 'smtp.sendgrid.net' && process.env.EMAIL_USER === 'apikey') {
+    return await sendEmailChangeNotificationViaSendGridAPI(oldEmail, fullName, newEmail);
+  }
+
+  // Fallback to SMTP
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Para App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
     to: oldEmail,
@@ -4692,6 +4698,74 @@ async function sendEmailChangeNotification(oldEmail, fullName, newEmail) {
     return true;
   } catch (error) {
     console.error('❌ Error sending email change notification:', error);
+    return false;
+  }
+}
+
+// SendGrid API for email change notification
+async function sendEmailChangeNotificationViaSendGridAPI(oldEmail, fullName, newEmail) {
+  const sgMail = require('@sendgrid/mail');
+  sgMail.setApiKey(process.env.EMAIL_PASSWORD);
+
+  const msg = {
+    to: oldEmail,
+    from: {
+      email: process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER,
+      name: process.env.EMAIL_FROM_NAME || 'Para App'
+    },
+    subject: 'Email Change Request - Para App',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; }
+          .content { padding: 40px 30px; }
+          .content h2 { color: #333; margin-top: 0; }
+          .content p { color: #666; margin: 15px 0; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+          .alert-box { background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px; color: #721c24; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>⚠️ Email Change Request</h1>
+          </div>
+          <div class="content">
+            <h2>Hi ${fullName},</h2>
+            <p>A request has been made to change your email address from <strong>${oldEmail}</strong> to <strong>${newEmail}</strong>.</p>
+            <div class="alert-box">
+              <strong>If you made this request:</strong>
+              <p style="margin: 10px 0;">Please verify the new email address by clicking the link sent to ${newEmail}.</p>
+            </div>
+            <div class="alert-box">
+              <strong>If you did NOT make this request:</strong>
+              <p style="margin: 10px 0;">Your account may be compromised. Please change your password immediately and contact support.</p>
+            </div>
+            <p>This notification is for your security. No action is required unless you did not initiate this change.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Para App. All rights reserved.</p>
+            <p>This is an automated email. Please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Email change notification sent via SendGrid API to ${oldEmail}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending notification via SendGrid API:', error.response?.body || error);
     return false;
   }
 }
