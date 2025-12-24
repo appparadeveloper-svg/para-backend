@@ -441,8 +441,8 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Insert user with binary UUID
     const [result] = await pool.execute(
-      `INSERT INTO users (id, full_name, email, avatar_url, password_hash) 
-       VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), NULL, ?)`,
+      `INSERT INTO users (id, full_name, email, avatar_url, password_hash, has_password) 
+       VALUES (?, AES_ENCRYPT(?, ${encryptionKey}), AES_ENCRYPT(?, ${encryptionKey}), NULL, ?, TRUE)`,
       [userIdBinary, fullName, email, hashedPassword]
     );
 
